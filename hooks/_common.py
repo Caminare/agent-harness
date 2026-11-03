@@ -5,7 +5,6 @@ Claude Code and Codex use tool_name/tool_input; Copilot uses the same with
 PascalCase event names, or toolName/toolArgs (sometimes a JSON string) with
 camelCase ones. normalize_event() maps all of them to one shape.
 """
-import hashlib
 import json
 import os
 import re
@@ -14,8 +13,6 @@ import subprocess
 import sys
 
 IS_WINDOWS = os.name == "nt"
-CACHE_DIR = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"),
-                         "agents-harness")
 
 SHELL_TOOLS = {"bash", "powershell", "pwsh", "shell", "run_in_terminal", "runinterminal",
                "exec_command", "terminal"}
@@ -39,7 +36,7 @@ def read_event():
 
 
 def normalize_event(event: dict) -> dict:
-    """Return {kind, tool, input, cwd, session_id, stop_hook_active} for any agent's payload."""
+    """Return {kind, tool, input, cwd} for any agent's payload."""
     tool = event.get("tool_name") or event.get("toolName") or ""
     tool_input = event.get("tool_input", event.get("toolArgs"))
     if isinstance(tool_input, str):
@@ -60,14 +57,7 @@ def normalize_event(event: dict) -> dict:
         kind = "read"
     else:
         kind = "other"
-    return {
-        "kind": kind,
-        "tool": name,
-        "input": tool_input,
-        "cwd": event.get("cwd") or os.getcwd(),
-        "session_id": str(event.get("session_id") or event.get("sessionId") or ""),
-        "stop_hook_active": bool(event.get("stop_hook_active") or event.get("stopHookActive")),
-    }
+    return {"kind": kind, "tool": name, "input": tool_input, "cwd": event.get("cwd") or os.getcwd()}
 
 
 def input_paths(tool_input: dict) -> list:
@@ -175,8 +165,3 @@ def repo_script(root: str, name: str):
             if pwsh:
                 return [pwsh, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path]
     return None
-
-
-def edit_marker(session_id: str, root: str) -> str:
-    key = hashlib.sha256(f"{session_id}\0{os.path.normcase(root)}".encode()).hexdigest()[:24]
-    return os.path.join(CACHE_DIR, f"edited-{key}")

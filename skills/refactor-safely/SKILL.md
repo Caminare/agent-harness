@@ -9,7 +9,7 @@ description: Plan and execute a behavior-preserving refactor (rename, extract, d
 2. Check the blast radius with `get_impact_radius_tool` and the critical paths with `get_affected_flows_tool`.
 3. Find candidates as needed: `refactor_tool` with mode `suggest`, `dead_code`, or `find_large_functions_tool`.
 4. For renames, run `refactor_tool` with mode `rename` to preview every affected location, show the preview, then apply with `apply_refactor_tool` and the returned `refactor_id`.
-5. After changes, run `detect_changes_tool` and the test suite (or `.agents/verify.sh`) to confirm behavior is unchanged.
+5. After changes, run `detect_changes_tool` and the test suite to confirm behavior is unchanged.
 
 Rules:
 1. Always preview before applying.

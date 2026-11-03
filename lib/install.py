@@ -24,7 +24,7 @@ IS_WINDOWS = os.name == "nt"
 NO_SYMLINKS = IS_WINDOWS and os.environ.get("AGENTS_HARNESS_NO_SYMLINKS") == "1"
 HARNESS = os.path.dirname(LIB)
 HOME = os.path.expanduser("~")
-HOOKS = (("PreToolUse", "guard.py", 15), ("PostToolUse", "format.py", 90), ("Stop", "verify.py", 300))
+HOOKS = (("PreToolUse", "guard.py", 15), ("PostToolUse", "format.py", 90))
 CLAUDE_MATCHERS = {"PreToolUse": "Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit|Read|Grep",
                    "PostToolUse": "Edit|Write|MultiEdit"}
 CODEX_MATCHERS = {"PreToolUse": "^Bash$|^apply_patch$", "PostToolUse": "^apply_patch$"}

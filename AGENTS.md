@@ -22,7 +22,7 @@ A repository's own AGENTS.md adds project facts on top of this file.
 2. Align before planning: for non-trivial work, interview me with the `grill-me` skill (`grill-with-docs` when the repo keeps a glossary and ADRs).
 3. Plan before executing. For changes touching more than one file, state the plan and wait for my go-ahead. For multi-step features, turn the agreed design into a spec and tickets with `to-spec` and `to-tickets`; for large, uncertain work use `wayfinder`.
 4. Implement with the `tdd` skill for logic: one failing test against public behavior, make it pass, repeat. Use `implement` to work through tickets.
-5. Verify before calling a task done: run the repository's `.agents/verify.sh` if it exists, otherwise the relevant typecheck, lint, and tests. Report the result. If you could not run them, say so.
+5. Verify before calling a task done: run the relevant build, typecheck, lint, and tests, using the commands in the repository's AGENTS.md. Report the result. If you could not run them, say so.
 6. Review with the mattpocock `code-review` skill. Before I merge risky or security-sensitive changes, offer an `adversarial-reviewer` pass as well.
 
 ## Skills: which one to use
@@ -31,7 +31,7 @@ The mattpocock skills plugin is installed alongside my own skills in every agent
 2. Bugs: `diagnosing-bugs`; add `debug-issue` when the code-review-graph tools are loaded.
 3. Reviews: `code-review` by default; `review-changes` for graph-based blast radius; `adversarial-reviewer` for a hostile pre-merge pass; `thermo-nuclear-code-quality-review` only when I ask.
 4. Handoffs: ai-memory handles same-repo session handoffs automatically; `handoff` passes a conversation to another agent; `work-context` writes a cross-repo document with exact contracts.
-5. Repo setup: `setup-repo` (AGENTS.md and verify check), then `setup-matt-pocock-skills` (issue tracker, labels, docs layout).
+5. Repo setup: `setup-repo` (project AGENTS.md), then `setup-matt-pocock-skills` (issue tracker, labels, docs layout).
 
 ## Engineering
 1. Keep diffs scoped to the request. Do not refactor, rename, or reformat unrelated code; suggest it instead.

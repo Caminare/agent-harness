@@ -11,7 +11,6 @@
 2. Test (all): `<command>`
 3. Test (one): `<command filtering by name>`
 4. Lint / analyze: `<command>`
-5. Verify before done: `.agents/verify.sh` (runs automatically when an agent finishes a turn)
 
 ## Architecture
 1. <Where things live, one line each, only what is not obvious from folder names.>

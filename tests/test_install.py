@@ -74,13 +74,13 @@ class Install(unittest.TestCase):
             self.assertEqual(os.path.normcase(os.path.realpath(linked)),
                              os.path.normcase(os.path.realpath(os.path.join(self.harness, "skills", skill, "SKILL.md"))))
         claude = self.read_json(".claude", "settings.json")
-        self.assertEqual(set(claude["hooks"]), {"PreToolUse", "PostToolUse", "Stop"})
+        self.assertEqual(set(claude["hooks"]), {"PreToolUse", "PostToolUse"})
         self.assertIn("Bash(git push *)", claude["permissions"]["ask"])
         codex = self.read_json(".codex", "hooks.json")
-        self.assertEqual(set(codex["hooks"]), {"PreToolUse", "PostToolUse", "Stop"})
+        self.assertEqual(set(codex["hooks"]), {"PreToolUse", "PostToolUse"})
         copilot = self.read_json(".copilot", "hooks", "agents-harness.json")
         self.assertEqual(copilot["version"], 1)
-        self.assertEqual(set(copilot["hooks"]), {"PreToolUse", "PostToolUse", "Stop"})
+        self.assertEqual(set(copilot["hooks"]), {"PreToolUse", "PostToolUse"})
 
     def test_rerun_changes_nothing(self):
         self.install()
@@ -106,6 +106,19 @@ class Install(unittest.TestCase):
         self.assertIn("rtk hook", commands)
         self.assertEqual(sum("guard.py" in c for c in commands), 1, commands)
         self.assertNotIn(old_style["command"], commands)
+
+    def test_upgrade_removes_the_retired_verify_hook(self):
+        os.makedirs(self.path(".claude"))
+        os.makedirs(self.path(".codex"))
+        retired = {"hooks": [{"type": "command", "command": 'python3 "$HOME/.agents/hooks/verify.py"'}]}
+        user_stop = {"hooks": [{"type": "command", "command": "notify-send done"}]}
+        for agent, name in ((".claude", "settings.json"), (".codex", "hooks.json")):
+            with open(self.path(agent, name), "w", encoding="utf-8") as handle:
+                json.dump({"hooks": {"Stop": [retired, user_stop]}}, handle)
+        self.assertEqual(self.install()[0], 0)
+        for agent, name in ((".claude", "settings.json"), (".codex", "hooks.json")):
+            stop = self.read_json(agent, name)["hooks"].get("Stop", [])
+            self.assertEqual(stop, [user_stop], agent)
 
     def test_backs_up_changed_claude_md_and_keeps_rtk(self):
         os.makedirs(self.path(".claude"))

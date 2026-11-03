@@ -7,7 +7,7 @@ Everything lives in `~/.agents`; each agent gets a thin link or a generated brid
 flowchart LR
   H["~/.agents (git repo)"] --> A[AGENTS.md]
   H --> S[skills/]
-  H --> K["hooks/ guard, format, verify"]
+  H --> K["hooks/ guard, format"]
   A -->|link| CX["~/.codex/AGENTS.md"]
   A -->|"@import"| CL["~/.claude/CLAUDE.md"]
   A -->|link| CP["~/.copilot/copilot-instructions.md"]
@@ -42,12 +42,11 @@ On Windows, a link is a symlink when your account may create one (Developer Mode
 | `skills/` | 9 personal skills |
 | mattpocock skills | 27 skills installed as the official plugin for each agent (MIT, [mattpocock/skills](https://github.com/mattpocock/skills)); self-updating, not copied here |
 | `hooks/guard.py` | Before each tool call: blocks force push, reset --hard, clean -f, branch -D, recursive deletes of root, home or drive paths (`rm`, `Remove-Item`, `rd /s`), secret files, and the graph CLI |
-| `hooks/format.py` | After each edit: runs the repo's formatter on the edited files (only where the repo already uses one) and arms the verify loop |
-| `hooks/verify.py` | When the agent tries to finish: runs the repo's `.agents/verify.sh` or `.ps1` and sends failures back |
+| `hooks/format.py` | After each edit: runs the repo's formatter on the edited files, only where the repo already uses one |
 | `lib/install.py` | The installer, one implementation for every OS |
 | `install.sh`, `install.ps1` | Launchers: macOS, Linux, WSL and Git Bash; Windows PowerShell |
 | `adapters/` | Claude settings (permissions, no AI attribution) and the CLAUDE.md bridge |
-| `templates/project/` | Reference `AGENTS.md`, `verify.sh` and `verify.ps1` the `setup-repo` skill starts from |
+| `templates/project/` | Reference `AGENTS.md` the `setup-repo` skill starts from |
 | `tests/` | Hook and installer tests, run in CI on Ubuntu, macOS and Windows |
 
 ## Setup
@@ -70,9 +69,9 @@ On Windows, a link is a symlink when your account may create one (Developer Mode
    ```powershell
    & "$HOME\.agents\install.ps1" --dry-run; & "$HOME\.agents\install.ps1"
    ```
-   It links the instructions and skills for Claude Code, Codex and Copilot, writes their hook configuration (merging into existing Claude and Codex settings without removing your entries), and installs the mattpocock skills plugin in every agent it finds (`--no-plugins` skips that). Replaced files go to `~/.agents-backup/`.
+   It links the instructions and skills for Claude Code, Codex and Copilot, writes their hook configuration (guard and format) (merging into existing Claude and Codex settings without removing your entries), and installs the mattpocock skills plugin in every agent it finds (`--no-plugins` skips that). Replaced files go to `~/.agents-backup/`.
 
-4. **Trust the hooks and restart.** Codex: `/hooks`, trust the three harness hooks. Restart Claude Code and Copilot; check `/hooks` in Claude Code.
+4. **Trust the hooks and restart.** Codex: `/hooks`, trust the two harness hooks. Restart Claude Code and Copilot; check `/hooks` in Claude Code.
 
 5. **Remove what is replaced.** `claude plugin uninstall caveman@caveman`, plus its Codex skill folder if you added one. Delete mattpocock skills you once copied by hand (`npx skills add`); the installer warns about them.
 
@@ -97,14 +96,13 @@ On Windows, a link is a symlink when your account may create one (Developer Mode
 
 9. **ai-memory.** Inspect and run its installer, then `ai-memory setup --yes --agent claude-code --agent codex`. Run `git -C ~/.agents diff` again and commit what is intended.
 
-10. **Repositories (optional, no install step).** Everything above already applies in every repo. To add project facts and a verification check to one, open it in any agent and run the `setup-repo` skill (`/setup-repo` in Claude Code and Copilot, `$setup-repo` in Codex). The agent reads the code, drafts `AGENTS.md` and `.agents/verify.sh` or `.ps1` with the repo's real commands, migrates any project `CLAUDE.md` or `.github/copilot-instructions.md`, and waits for your approval before writing. It then offers `setup-matt-pocock-skills`, which configures the issue tracker, labels and docs layout that `to-spec`, `to-tickets` and `triage` use.
+10. **Repositories (optional, no install step).** Everything above already applies in every repo. To add project facts to one, open it in any agent and run the `setup-repo` skill (`/setup-repo` in Claude Code and Copilot, `$setup-repo` in Codex). The agent reads the code, drafts `AGENTS.md` with the repo's real build and test commands (each run once to confirm it works), migrates any project `CLAUDE.md` or `.github/copilot-instructions.md`, and waits for your approval before writing. It then offers `setup-matt-pocock-skills`, which configures the issue tracker, labels and docs layout that `to-spec`, `to-tickets` and `triage` use.
 
-11. **Verify.**
+11. **Check the setup.**
     1. Each agent reports both `~/.agents/AGENTS.md` and the repo `AGENTS.md` when asked "Summarize the current instructions" (`/context` in Claude Code, `/instructions` in Copilot).
     2. The skills list (`/skills`, or `$` in Codex) shows your 9 skills plus the mattpocock ones (`tdd`, `grill-me`, `to-spec`, ...).
     3. Asking any agent to `git push --force` is blocked.
-    4. In a repo with a verify script, breaking a test and letting the agent finish sends it back with the failure.
-    5. `python -m unittest discover -s ~/.agents/tests` passes.
+    4. `python -m unittest discover -s ~/.agents/tests` passes.
 
 ## Daily use and maintenance
 
@@ -118,7 +116,7 @@ On Windows, a link is a symlink when your account may create one (Developer Mode
 flowchart LR
   G["grill-me<br/>align"] --> SP["to-spec / to-tickets<br/>plan"]
   SP --> I["tdd / implement<br/>build"]
-  I --> V["verify script<br/>Stop hook"]
+  I --> V["build, lint, tests<br/>from repo AGENTS.md"]
   V --> R["code-review<br/>adversarial-reviewer"]
   R --> PR["pr-description"]
 ```
@@ -128,7 +126,6 @@ flowchart LR
 ## Known limits
 
 1. Hooks are guardrails, not a sandbox. Use each agent's sandbox for real isolation.
-2. The verify loop arms only after the agent edits files through its edit tools in that session, so your own uncommitted work never triggers it. Edits made purely through shell commands do not arm it either.
-3. CI runs the rendered hook commands through sh, bash, PowerShell and cmd. What it cannot run is each agent itself: Codex's Windows hook shell and Copilot's tool names are taken from their documentation, so the first session in each agent is the real check.
-4. `context: fork` and `disable-model-invocation` are Claude Code fields. Codex and Copilot run forked skills inline; Codex gets the manual-only policy for the strict review and `setup-repo` through `agents/openai.yaml`.
-5. ai-memory currently covers Claude Code and Codex, not Copilot.
+2. CI runs the rendered hook commands through sh, bash, PowerShell and cmd. What it cannot run is each agent itself: Codex's Windows hook shell and Copilot's tool names are taken from their documentation, so the first session in each agent is the real check.
+3. `context: fork` and `disable-model-invocation` are Claude Code fields. Codex and Copilot run forked skills inline; Codex gets the manual-only policy for the strict review and `setup-repo` through `agents/openai.yaml`.
+4. ai-memory currently covers Claude Code and Codex, not Copilot.

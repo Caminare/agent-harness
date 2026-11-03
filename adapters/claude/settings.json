@@ -15,8 +15,7 @@
       "Bash(dotnet test *)",
       "Bash(flutter analyze *)",
       "Bash(flutter test *)",
-      "Bash(dart format *)",
-      "Bash(./.agents/verify.sh)"
+      "Bash(dart format *)"
     ],
     "ask": [
       "Bash(git commit *)",

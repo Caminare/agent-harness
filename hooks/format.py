@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
 """PostToolUse hook for Claude Code, Codex and GitHub Copilot: format edited files.
 
-1. Records that the agent edited files in this repository during this
-   session, so the Stop hook (verify.py) only verifies the agent's own work.
-2. Formats the touched files. A repository owns formatting by providing
-   `.agents/format.sh` or `.agents/format.ps1`, which receives the file paths.
-   Without one, a built-in formatter runs only where the repository already
-   opts in: dart format for Dart, prettier when a prettier config exists,
-   csharpier when it is a configured dotnet tool. Missing formatters are
-   silent; a formatter that fails (the file may not parse) exits 2 so the
-   agent sees it.
+Formats the touched files. A repository owns formatting by providing
+`.agents/format.sh` or `.agents/format.ps1`, which receives the file paths.
+Without one, a built-in formatter runs only where the repository already opts
+in: dart format for Dart, prettier when a prettier config exists, csharpier
+when it is a configured dotnet tool. Missing formatters are silent; a
+formatter that fails (the file may not parse) exits 2 so the agent sees it.
 """
 import glob
 import json
@@ -20,8 +17,8 @@ import sys
 sys.dont_write_bytecode = True  # keep ~/.agents free of __pycache__
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _common import (CACHE_DIR, IS_WINDOWS, edit_marker, input_paths, normalize_event,  # noqa: E402
-                     patch_paths, read_event, repo_root, repo_script, run)
+from _common import (IS_WINDOWS, input_paths, normalize_event, patch_paths, read_event,  # noqa: E402
+                     repo_root, repo_script, run)
 
 TIMEOUT_SECONDS = 60
 
@@ -82,12 +79,6 @@ def main() -> None:
     root = repo_root(cwd)
     if not files or not root:
         sys.exit(0)
-
-    try:
-        os.makedirs(CACHE_DIR, exist_ok=True)
-        open(edit_marker(e["session_id"], root), "a").close()
-    except OSError:
-        pass
 
     owned = repo_script(root, "format")
     commands = [owned + files] if owned else [c for c in (builtin_command(f, root) for f in files) if c]

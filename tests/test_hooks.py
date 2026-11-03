@@ -7,7 +7,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 
 HOOKS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hooks")
@@ -163,82 +162,6 @@ class Format(unittest.TestCase):
 
     def test_no_formatter_is_silent(self):
         self.assertEqual(call("format.py", self.payload("Edit"), self.env)[0], 0)
-
-
-class Verify(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.env = {"XDG_CACHE_HOME": os.path.join(self.tmp.name, "cache")}
-        self.repo = new_repo(self.tmp.name, "v")
-        self.file = os.path.join(self.repo, "f.txt")
-        write(self.file, "a\n")
-        git(self.repo, "add", "-A")
-        git(self.repo, "commit", "-qm", "init")
-        self.stop = {"session_id": "s1", "cwd": self.repo, "hook_event_name": "Stop", "stop_hook_active": False}
-        self.runs = os.path.join(self.tmp.name, "runs")
-
-    def tearDown(self):
-        self.tmp.cleanup()
-
-    def check(self, sh: str, ps1: str):
-        write(os.path.join(self.repo, ".agents", "verify.sh"), "#!/usr/bin/env bash\n" + sh, True)
-        write(os.path.join(self.repo, ".agents", "verify.ps1"), ps1)
-
-    def count_runs(self) -> int:
-        with open(self.runs, encoding="utf-8") as handle:
-            return handle.read().count("ran")
-
-    def agent_edits(self, text="b\n"):
-        with open(self.file, "a", encoding="utf-8", newline="\n") as handle:
-            handle.write(text)
-        payload = {"session_id": "s1", "cwd": self.repo, "tool_name": "Edit", "tool_input": {"file_path": self.file}}
-        self.assertEqual(call("format.py", payload, self.env)[0], 0)
-
-    def decision(self, payload=None):
-        code, out, err = call("verify.py", payload or self.stop, self.env)
-        self.assertEqual(code, 0, err)
-        return json.loads(out) if out.strip() else None
-
-    def test_failing_check_keeps_agent_working(self):
-        self.check('echo "1 test failed: CartTotal"; exit 1\n', 'Write-Output "1 test failed: CartTotal"; exit 1\n')
-        git(self.repo, "add", "-A")
-        git(self.repo, "commit", "-qm", "check")
-        self.assertIsNone(self.decision(), "clean tree is skipped")
-        with open(self.file, "a", encoding="utf-8") as handle:
-            handle.write("user edit\n")
-        self.assertIsNone(self.decision(), "user's own edits do not arm the check")
-        self.agent_edits()
-        self.assertIsNone(self.decision({**self.stop, "session_id": "other"}), "other sessions unaffected")
-        result = self.decision()
-        self.assertEqual(result["decision"], "block")
-        self.assertIn("CartTotal", result["reason"])
-        self.assertIsNone(self.decision({**self.stop, "stop_hook_active": True}), "no loop")
-        self.assertIsNone(self.decision({**self.stop, "stopHookActive": True}), "no loop, camelCase")
-
-    def test_passing_check_is_cached_until_tree_changes(self):
-        log = self.runs.replace("\\", "/")
-        self.check(f'echo ran >> "{log}"; exit 0\n', f'Add-Content -Path "{log}" -Value ran; exit 0\n')
-        self.agent_edits()
-        self.assertIsNone(self.decision())
-        self.assertIsNone(self.decision())
-        self.assertEqual(self.count_runs(), 1)
-        self.agent_edits("c\n")
-        self.assertIsNone(self.decision())
-        self.assertEqual(self.count_runs(), 2)
-
-    def test_timeout_kills_lingering_children(self):
-        self.check("sleep 60 &\nsleep 60\n",
-                   "Start-Process -NoNewWindow powershell -ArgumentList '-Command','Start-Sleep 60'; Start-Sleep 60\n")
-        self.agent_edits()
-        start = time.time()
-        code, out, err = call("verify.py", self.stop, {**self.env, "AGENTS_VERIFY_TIMEOUT": "3"})
-        self.assertEqual(code, 0, err)
-        self.assertIn("timed out", json.loads(out)["reason"])
-        self.assertLess(time.time() - start, 30)
-
-    def test_no_check_or_bad_input_passes(self):
-        self.assertIsNone(self.decision())
-        self.assertEqual(call("verify.py", "not json", self.env)[0], 0)
 
 
 if __name__ == "__main__":
