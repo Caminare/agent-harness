@@ -1,0 +1,4 @@
+# Codex: same policy as `disable-model-invocation: true` for Claude Code.
+# Writes files, so it only runs when invoked explicitly ($setup-repo).
+policy:
+  allow_implicit_invocation: false

@@ -1,0 +1,4 @@
+# Codex: same policy as `disable-model-invocation: true` for Claude Code.
+# The skill only runs when invoked explicitly ($thermo-nuclear-code-quality-review).
+policy:
+  allow_implicit_invocation: false

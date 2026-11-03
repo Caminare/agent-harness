@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
+  "permissions": {
+    "allow": [
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git branch --show-current)",
+      "Bash(dotnet build *)",
+      "Bash(dotnet test *)",
+      "Bash(flutter analyze *)",
+      "Bash(flutter test *)",
+      "Bash(dart format *)",
+      "Bash(./.agents/verify.sh)"
+    ],
+    "ask": [
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(git rebase *)",
+      "Bash(git merge *)"
+    ],
+    "deny": [
+      "Read(**/.env)",
+      "Read(**/.env.*.local)",
+      "Read(**/.env.production)",
+      "Read(**/.env.development)",
+      "Read(**/*.pem)",
+      "Read(**/*.key)",
+      "Read(**/*.p12)",
+      "Read(**/*.pfx)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit|Read|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/.agents/hooks/guard.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/.agents/hooks/format.py\"",
+            "timeout": 90
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/.agents/hooks/verify.py\"",
+            "timeout": 300
+          }
+        ]
+      }
+    ]
+  }
+}
