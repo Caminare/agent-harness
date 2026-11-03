@@ -3,7 +3,10 @@
 # Run once per machine (and again after pulling updates). Repositories need no
 # install step; ask the agent to run the setup-repo skill inside one instead.
 #
-#   ~/.agents/install.sh [--dry-run]
+#   ~/.agents/install.sh [--dry-run] [--no-plugins]
+#
+# Also installs the mattpocock skills plugin for Claude Code and Codex
+# (MIT, https://github.com/mattpocock/skills); --no-plugins skips that.
 #
 # Safe to re-run. Anything it replaces is moved to ~/.agents-backup/<timestamp>/.
 set -euo pipefail
@@ -12,12 +15,14 @@ HARNESS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP="$HOME/.agents-backup/$STAMP"
 DRY=0
+PLUGINS=1
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY=1 ;;
-    -h|--help) sed -n '2,8p' "$0"; exit 0 ;;
-    *) echo "Unknown argument: $1 (only --dry-run is supported)"; exit 1 ;;
+    --no-plugins) PLUGINS=0 ;;
+    -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
+    *) echo "Unknown argument: $1 (supported: --dry-run, --no-plugins)"; exit 1 ;;
   esac
   shift
 done
@@ -51,6 +56,34 @@ link() { # link <target> <link-path>
   run mkdir -p "$(dirname "$path")"
   run ln -s "$target" "$path"
   [ "$DRY" -eq 1 ] || say "  linked $path -> $target"
+}
+
+plugins() {
+  say "mattpocock skills plugin"
+  for dir in "$HOME/.claude/skills" "$HOME/.agents/skills"; do # loose copies would duplicate the plugin
+    for name in tdd grill-me to-spec code-review; do
+      if [ -d "$dir/$name" ] && [ ! -L "$dir/$name" ]; then
+        say "  WARNING: $dir/$name looks like a copied mattpocock skill; remove copies so each skill loads once."
+      fi
+    done
+  done
+  if command -v claude >/dev/null; then
+    if claude plugin list 2>/dev/null | grep -q mattpocock-skills; then
+      say "  ok: Claude Code plugin installed"
+    else
+      run claude plugin install mattpocock-skills@claude-plugins-official \
+        || say "  WARNING: could not install the Claude Code plugin; run: claude plugin install mattpocock-skills@claude-plugins-official"
+    fi
+  else
+    say "  skip: claude not found"
+  fi
+  if command -v codex >/dev/null; then
+    run codex plugin marketplace add mattpocock/skills || true
+    run codex plugin add mattpocock-skills@mattpocock \
+      || say "  WARNING: could not install the Codex plugin; run: codex plugin marketplace add mattpocock/skills && codex plugin add mattpocock-skills@mattpocock"
+  else
+    say "  skip: codex not found"
+  fi
 }
 
 user_setup() {
@@ -96,6 +129,13 @@ user_setup() {
   for skill in "$HARNESS"/skills/*/; do
     link "${skill%/}" "$HOME/.claude/skills/$(basename "$skill")"
   done
+  for path in "$HOME"/.claude/skills/*; do # drop links to skills removed from the harness
+    if [ -L "$path" ] && [ ! -e "$path" ]; then
+      case "$(readlink "$path")" in
+        "$HARNESS"/skills/*) run rm "$path"; [ "$DRY" -eq 1 ] || say "  removed stale link $path" ;;
+      esac
+    fi
+  done
   if [ -f "$HOME/.claude/settings.json" ]; then
     snapshot "$HOME/.claude/settings.json"
     run python3 "$HARNESS/lib/merge_json.py" "$HOME/.claude/settings.json" "$HARNESS/adapters/claude/settings.json" $([ "$DRY" -eq 1 ] && echo --dry-run)
@@ -103,6 +143,8 @@ user_setup() {
     run cp "$HARNESS/adapters/claude/settings.json" "$HOME/.claude/settings.json"
     [ "$DRY" -eq 1 ] || say "  created ~/.claude/settings.json"
   fi
+
+  if [ "$PLUGINS" -eq 1 ]; then plugins; fi
 
   say ""
   say "Next: open Codex and run /hooks to trust the three harness hooks; restart Claude Code."

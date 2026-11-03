@@ -22,3 +22,6 @@ Optional and per repository. The personal harness already works everywhere; this
 
 ## 3. Propose, then apply
 Show the drafted files (or diffs against existing ones) and the time `verify.sh` took, and wait for approval. After applying, run `.agents/verify.sh` once and report the result. Do not commit; propose a commit message per the Git rules.
+
+## 4. Hand off to the mattpocock setup
+If the mattpocock skills are installed and the repo has not been configured for them, offer to run `setup-matt-pocock-skills` next. It sets the issue tracker, triage labels, and docs layout that `to-spec`, `to-tickets`, `triage`, and `grill-with-docs` rely on.

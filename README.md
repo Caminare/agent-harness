@@ -25,13 +25,14 @@ Why one bridge file remains: Claude Code reads a project `AGENTS.md` natively (v
 | Path | Purpose |
 | --- | --- |
 | `AGENTS.md` | Personal working agreement, the only instruction file you edit |
-| `skills/` | 10 personal skills (Codex reads them here; Claude through symlinks) |
+| `skills/` | 9 personal skills (Codex reads them here; Claude through symlinks) |
+| mattpocock skills | 27 skills installed by `install.sh` as the official plugin for each agent (MIT, [mattpocock/skills](https://github.com/mattpocock/skills)); self-updating, not copied here |
 | `hooks/guard.py` | PreToolUse: blocks force push, reset --hard, clean -f, branch -D, recursive rm on root or home, secret files, graph CLI |
 | `hooks/format.py` | PostToolUse: formats edited files (repo's `.agents/format.sh`, or dart, prettier, csharpier where the repo opts in) and arms the verify loop |
 | `hooks/verify.py` | Stop: runs the repo's `.agents/verify.sh` before the agent may finish, after it edited files |
 | `adapters/` | Claude settings (permissions, hooks, no AI attribution) and Codex hooks.json |
 | `templates/project/` | Reference `AGENTS.md` and `.agents/verify.sh` the `setup-repo` skill starts from |
-| `install.sh` | One-time machine setup; idempotent, `--dry-run`, backups in `~/.agents-backup/` |
+| `install.sh` | One-time machine setup; idempotent, `--dry-run`, `--no-plugins`, backups in `~/.agents-backup/` |
 | `tests/test_hooks.sh` | 78 hook tests with Claude and Codex payloads |
 
 ## Setup
@@ -44,11 +45,11 @@ Why one bridge file remains: Claude Code reads a project `AGENTS.md` natively (v
    ```
    If `~/.agents` already exists (for example with Codex skills), clone elsewhere and merge its contents in. To customize, fork the repo first and clone your fork.
 
-3. **Install for both agents.** `~/.agents/install.sh --dry-run` to review, then `~/.agents/install.sh`. It links `~/.codex/AGENTS.md`, writes the Claude bridge (keeps `@RTK.md` if present), links the skills, and merges permissions and hooks into existing settings without removing anything. Replaced files go to `~/.agents-backup/`.
+3. **Install for both agents.** `~/.agents/install.sh --dry-run` to review, then `~/.agents/install.sh`. It links `~/.codex/AGENTS.md`, writes the Claude bridge (keeps `@RTK.md` if present), links the skills, merges permissions and hooks into existing settings without removing anything, and installs the mattpocock skills plugin for Claude Code and Codex. Replaced files go to `~/.agents-backup/`.
 
 4. **Trust the hooks.** Codex: `/hooks`, trust the three harness hooks. Claude Code: restart and check `/hooks`.
 
-5. **Remove what is replaced.** `claude plugin uninstall caveman@caveman`, plus its Codex skill folder if you added one. Archive the old Global Claude.MD and PR Description pages. Matt Pocock's skills overlap `write-plan`: keep one approach.
+5. **Remove what is replaced.** `claude plugin uninstall caveman@caveman`, plus its Codex skill folder if you added one. If you ever copied mattpocock skills by hand (`npx skills add`), delete those copies; the installer warns about them, since the plugin already provides them.
 
 6. **MCP servers.**
    ```bash
@@ -70,11 +71,11 @@ Why one bridge file remains: Claude Code reads a project `AGENTS.md` natively (v
 
 9. **ai-memory.** Inspect and run its installer, then `ai-memory setup --yes --agent claude-code --agent codex`. Run `git -C ~/.agents diff` again and commit what is intended.
 
-10. **Repositories (optional, no install step).** Everything above already applies in every repo. To add project facts and a verification check to a repo, open it in either agent and run `/setup-repo` (Claude) or `$setup-repo` (Codex). The agent reads the code, drafts `AGENTS.md` and `.agents/verify.sh` with the repo's real commands, migrates any project `CLAUDE.md`, and waits for your approval before writing.
+10. **Repositories (optional, no install step).** Everything above already applies in every repo. To add project facts and a verification check to a repo, open it in either agent and run `/setup-repo` (Claude) or `$setup-repo` (Codex). The agent reads the code, drafts `AGENTS.md` and `.agents/verify.sh` with the repo's real commands, migrates any project `CLAUDE.md`, and waits for your approval before writing. It then offers `setup-matt-pocock-skills`, which configures the issue tracker, labels and docs layout that `to-spec`, `to-tickets` and `triage` use.
 
 11. **Verify.**
     1. Claude `/context` lists both `AGENTS.md` files; Codex answers "Summarize the current instructions" with both.
-    2. `/skills` (Claude) and `$` (Codex) show the 10 skills.
+    2. `/skills` (Claude) and `$` (Codex) show your 9 skills plus the mattpocock ones (`tdd`, `grill-me`, `to-spec`, ...).
     3. Asking either agent to `git push --force` is blocked.
     4. In a repo with `.agents/verify.sh`, breaking a test and letting the agent finish sends it back with the failure.
     5. `bash ~/.agents/tests/test_hooks.sh` passes.
@@ -90,3 +91,16 @@ Why one bridge file remains: Claude Code reads a project `AGENTS.md` natively (v
 1. Hooks are guardrails, not a sandbox. Enable `/sandbox` in Claude Code and Codex's sandbox for real isolation.
 2. The verify loop arms only after the agent edits through Edit, Write or apply_patch in that session, so your own uncommitted work never triggers it. Edits made purely through shell commands do not arm it either.
 3. `context: fork` and `disable-model-invocation` are Claude Code fields. Codex gets the same manual-only policy for the strict review and `setup-repo` through `agents/openai.yaml` and runs forked skills inline.
+
+## Workflow at a glance
+
+```mermaid
+flowchart LR
+  G["grill-me<br/>align"] --> SP["to-spec / to-tickets<br/>plan"]
+  SP --> I["tdd / implement<br/>build"]
+  I --> V["verify.sh<br/>Stop hook"]
+  V --> R["code-review<br/>adversarial-reviewer"]
+  R --> PR["pr-description"]
+```
+
+`AGENTS.md` lists which skill to use where the personal and mattpocock skills overlap (PR descriptions, bugs, reviews, handoffs, repo setup).

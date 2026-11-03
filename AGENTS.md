@@ -19,14 +19,23 @@ A repository's own AGENTS.md adds project facts on top of this file.
 
 ## Workflow
 1. Explore before changing: read the relevant code, tests, and neighbouring conventions first.
-2. Plan before executing. For changes touching more than one file, state the plan and wait for my go-ahead. For multi-step features, use the `write-plan` skill so the plan survives the session.
-3. Implement in small steps with TDD for logic: one failing test against public behavior, make it pass, repeat. Do not test implementation details.
-4. Verify before calling a task done: run the repository's `.agents/verify.sh` if it exists, otherwise the relevant typecheck, lint, and tests. Report the result. If you could not run them, say so.
-5. Before I merge, offer an `adversarial-reviewer` pass on the diff.
+2. Align before planning: for non-trivial work, interview me with the `grill-me` skill (`grill-with-docs` when the repo keeps a glossary and ADRs).
+3. Plan before executing. For changes touching more than one file, state the plan and wait for my go-ahead. For multi-step features, turn the agreed design into a spec and tickets with `to-spec` and `to-tickets`; for large, uncertain work use `wayfinder`.
+4. Implement with the `tdd` skill for logic: one failing test against public behavior, make it pass, repeat. Use `implement` to work through tickets.
+5. Verify before calling a task done: run the repository's `.agents/verify.sh` if it exists, otherwise the relevant typecheck, lint, and tests. Report the result. If you could not run them, say so.
+6. Review with the mattpocock `code-review` skill. Before I merge risky or security-sensitive changes, offer an `adversarial-reviewer` pass as well.
+
+## Skills: which one to use
+The mattpocock skills plugin is installed alongside my own skills. Where they overlap, use these:
+1. PR description: `pr-description` (mine; writes `pr_description.md` with Jira context), not `pr`.
+2. Bugs: `diagnosing-bugs`; add `debug-issue` when the code-review-graph tools are loaded.
+3. Reviews: `code-review` by default; `review-changes` for graph-based blast radius; `adversarial-reviewer` for a hostile pre-merge pass; `thermo-nuclear-code-quality-review` only when I ask.
+4. Handoffs: ai-memory handles same-repo session handoffs automatically; `handoff` passes a conversation to another agent; `work-context` writes a cross-repo document with exact contracts.
+5. Repo setup: `setup-repo` (AGENTS.md and verify check), then `setup-matt-pocock-skills` (issue tracker, labels, docs layout).
 
 ## Engineering
 1. Keep diffs scoped to the request. Do not refactor, rename, or reformat unrelated code; suggest it instead.
-2. Prefer deep modules (small interface, substantial implementation) and self-documenting code. Comments explain why, not what.
+2. Prefer deep modules (small interface, substantial implementation; see the `codebase-design` skill) and self-documenting code. Comments explain why, not what.
 3. Follow the project's existing conventions over your defaults.
 4. Never read, print, or edit secrets (`.env`, keys, tokens). Never put them in code, logs, commits, or memory.
 
@@ -60,5 +69,5 @@ Reason: memory answers why and what failed before; the code graph answers where 
 7. If I ask to save context for the next session, call `memory_handoff_begin`. For a handoff document another repository or person will read, use the `work-context` skill instead.
 
 ## Improving this harness
-1. When you make the same mistake twice, or I correct you on something this file or the repository's AGENTS.md should have covered, propose a one-line addition to the right file. If the rule must never be broken, propose a hook instead.
+1. When you make the same mistake twice, or I correct you on something this file or the repository's AGENTS.md should have covered, propose a one-line addition to the right file. If the rule must never be broken, propose a hook instead. After a long session, offer the `retro` skill.
 2. Never edit this file or any hook without my approval.
