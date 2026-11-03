@@ -1,40 +1,63 @@
 #!/usr/bin/env python3
-"""PreToolUse guard shared by Claude Code and Codex.
+"""PreToolUse guard for Claude Code, Codex and GitHub Copilot, on Windows and Unix.
 
-Blocks destructive git commands, recursive rm on root/home/wildcard paths,
-reading or writing secret files, and running code-review-graph through the
-shell. Commands are tokenized, so words inside branch names or commit
-messages do not trigger it. Exit 2 blocks the call and sends the reason on
-stderr back to the agent; exit 0 lets it through.
+Blocks destructive git commands, recursive deletes of root, home or wildcard
+paths (rm, Remove-Item, rd /s), reading or writing secret files, and running
+code-review-graph through the shell. Commands are tokenized, so words inside
+branch names or commit messages do not trigger it. Exit 2 blocks the call and
+sends the reason on stderr; every agent treats that as a denial.
 """
-import json
 import os
 import re
 import shlex
 import sys
 
-OPERATORS = {";", "&&", "||", "|", "&", "\n", "(", ")", "|&"}
+sys.dont_write_bytecode = True  # keep ~/.agents free of __pycache__
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _common import (IS_WINDOWS, POWERSHELL_TOOLS, input_paths, normalize_event,  # noqa: E402
+                     patch_paths, read_event)
+
+OPERATORS = {";", "&&", "||", "|", "&", "(", ")", "|&"}
 REDIRECTS = {">", ">>", "<", "&>", "2>", "1>", ">|"}
-WRAPPERS = {"sudo", "command", "env", "nohup", "time", "exec", "xargs"}
+WRAPPERS = {"sudo", "command", "env", "nohup", "time", "exec", "xargs", "cmd", "/c", "cmd.exe"}
 SECRET_READERS = {"cat", "less", "more", "head", "tail", "bat", "nl", "strings", "xxd", "od",
-                  "base64", "source", ".", "grep", "rg", "awk", "sed", "vi", "vim", "nano",
-                  "code", "open", "cut", "sort", "diff", "type", "Get-Content"}
+                  "base64", "source", ".", "grep", "rg", "awk", "sed", "vi", "vim", "nano", "code",
+                  "open", "cut", "sort", "diff", "type", "get-content", "gc", "select-string", "sls",
+                  "findstr", "notepad", "import-csv"}
+COPIERS = {"cp", "mv", "scp", "rsync", "copy", "move", "copy-item", "move-item", "cpi", "mi",
+           "xcopy", "robocopy"}
+PS_REMOVERS = {"remove-item", "ri", "del", "erase", "rd", "rmdir", "rm"}
 SAFE_ENV_SUFFIXES = (".example", ".sample", ".template", ".dist")
-KEY_FILE = re.compile(r"^(id_rsa|id_ed25519|id_ecdsa)$|\.(pem|key|p12|pfx)$")
-DANGEROUS_RM_TARGETS = {"/", "/*", "~", "~/", "~/*", "$HOME", "${HOME}", "$HOME/", "${HOME}/",
-                        "$HOME/*", "${HOME}/*", "*", ".", "..", "./", "../", "./*"}
+KEY_FILE = re.compile(r"^(id_rsa|id_ed25519|id_ecdsa)$|\.(pem|key|p12|pfx)$", re.I)
+HOME_TOKENS = {"~", "$home", "${home}", "$env:userprofile", "$env:home", "%userprofile%",
+               "$env:homedrive", "%homedrive%"}
 GRAPH_CLI_ALLOWED = {"install", "--help", "-h", "--version", "-V"}
-PATCH_FILE_LINE = re.compile(r"^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$", re.M)
 
 
 def is_secret_path(path: str) -> bool:
-    name = os.path.basename(str(path).strip().strip("'\""))
-    if name == ".env" or (name.startswith(".env.") and not name.endswith(SAFE_ENV_SUFFIXES)):
+    name = re.split(r"[\\/]", str(path).strip().strip("'\""))[-1]
+    lower = name.lower()
+    if lower == ".env" or (lower.startswith(".env.") and not lower.endswith(SAFE_ENV_SUFFIXES)):
         return True
     return bool(KEY_FILE.search(name))
 
 
-def tokenize(cmd: str) -> list:
+def is_dangerous_target(target: str) -> bool:
+    t = target.strip().strip("'\"").replace("\\", "/").rstrip()
+    if not t:
+        return False
+    if re.fullmatch(r"[A-Za-z]:/?(\*|\*\.\*)?", t):  # drive root such as C:\ or C:\*
+        return True
+    base = t.rstrip("/*").rstrip("/") if t not in ("/", "/*") else t
+    if t in ("/", "/*", "*", "*.*", ".", "..", "./", "../", "./*"):
+        return True
+    return base.lower() in HOME_TOKENS
+
+
+def tokenize(cmd: str, powershell: bool) -> list:
+    if powershell or IS_WINDOWS:
+        cmd = cmd.replace("\\", "/")  # Windows paths: keep separators, avoid shell escapes
     lexer = shlex.shlex(cmd.replace("\n", " ; "), posix=True, punctuation_chars=";&|()<>")
     lexer.whitespace_split = True
     lexer.commenters = ""
@@ -59,11 +82,11 @@ def segments(tokens: list) -> list:
 
 
 def strip_prefix(words: list) -> list:
-    """Drop VAR=value assignments and wrappers like sudo/env before the command word."""
     i = 0
-    while i < len(words) and (re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[i]) or words[i] in WRAPPERS):
+    while i < len(words) and (re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[i]) or
+                              words[i].lower() in WRAPPERS or words[i] == "&"):
         i += 1
-        while i < len(words) and words[i - 1] in WRAPPERS and words[i].startswith("-"):
+        while i < len(words) and words[i - 1].lower() in WRAPPERS and words[i].startswith("-"):
             i += 1
     return words[i:]
 
@@ -74,7 +97,7 @@ def short_flags(args: list) -> str:
 
 def check_git(args: list):
     i = 0
-    while i < len(args) and args[i].startswith("-"):  # global options such as -C <dir>, -c k=v
+    while i < len(args) and args[i].startswith("-"):
         i += 2 if args[i] in ("-C", "-c", "--git-dir", "--work-tree", "--namespace") else 1
     if i >= len(args):
         return None
@@ -94,25 +117,41 @@ def check_git(args: list):
     return None
 
 
-def check_rm(args: list):
+def split_options(args: list):
     options, targets, after_dashes = [], [], False
     for arg in args:
         if arg == "--" and not after_dashes:
             after_dashes = True
-        elif arg.startswith("-") and not after_dashes:
+        elif (arg.startswith("-") or re.fullmatch(r"/[A-Za-z]", arg)) and not after_dashes:
             options.append(arg)
         else:
             targets.append(arg)
+    return options, targets
+
+
+def check_rm_unix(args: list):
+    options, targets = split_options(args)
     flags = short_flags(options)
     recursive = "r" in flags or "R" in flags or "--recursive" in options
-    if recursive and any(t.rstrip() in DANGEROUS_RM_TARGETS for t in targets):
-        return "recursive rm on a root, home, or wildcard path"
+    if recursive and any(is_dangerous_target(t) for t in targets):
+        return "recursive delete of a root, home, or wildcard path"
     return None
 
 
-def check_bash(cmd: str):
-    tokens = tokenize(cmd)
-    for i, token in enumerate(tokens):  # writing into a secret file through a redirect
+def check_rm_powershell(args: list):
+    options, targets = split_options(args)
+    lowered = [o.lower() for o in options]
+    recursive = any(o.startswith("-r") and "-recurse".startswith(o) for o in lowered) or \
+        "/s" in lowered or "-recurse:$true" in lowered
+    targets += [args[i + 1] for i, a in enumerate(args[:-1]) if a.lower() in ("-path", "-literalpath")]
+    if recursive and any(is_dangerous_target(t) for t in targets):
+        return "recursive delete of a root, home, or wildcard path"
+    return None
+
+
+def check_command(cmd: str, powershell: bool):
+    tokens = tokenize(cmd, powershell)
+    for i, token in enumerate(tokens):
         if token in REDIRECTS and i + 1 < len(tokens) and is_secret_path(tokens[i + 1]):
             return "the command writes to a secrets file"
     for segment in segments(tokens):
@@ -121,25 +160,38 @@ def check_bash(cmd: str):
         words = strip_prefix(words)
         if not words:
             continue
-        program, args = os.path.basename(words[0]), words[1:]
+        program = re.split(r"[\\/]", words[0])[-1].lower()
+        if program.endswith(".exe"):
+            program = program[:-4]
+        args = words[1:]
+        reason = None
         if program == "git":
             reason = check_git(args)
-            if reason:
-                return reason
-        elif program == "rm":
-            reason = check_rm(args)
-            if reason:
-                return reason
+        elif program in PS_REMOVERS and (powershell or program not in ("rm", "rmdir")):
+            reason = check_rm_powershell(args)
+        elif program in ("rm", "rmdir"):
+            reason = check_rm_unix(args)
         elif program == "code-review-graph" and args and args[0] not in GRAPH_CLI_ALLOWED:
-            return ("code-review-graph runs through its MCP tools, not the shell "
-                    "(use build_or_update_graph_tool and the other *_tool calls)")
+            reason = ("code-review-graph runs through its MCP tools, not the shell "
+                      "(use build_or_update_graph_tool and the other *_tool calls)")
         elif program in SECRET_READERS and any(is_secret_path(a) for a in args if not a.startswith("-")):
-            return "the command reads a secrets file"
-        elif program in ("cp", "mv", "scp", "rsync"):
+            reason = "the command reads a secrets file"
+        elif program in COPIERS:
             sources = [a for a in args if not a.startswith("-")][:-1]
             if any(is_secret_path(a) for a in sources):
-                return "the command copies a secrets file"
+                reason = "the command copies a secrets file"
+        if reason:
+            return reason
     return None
+
+
+def check_shell(cmd: str, tool: str):
+    if tool in POWERSHELL_TOOLS:
+        return check_command(cmd, powershell=True)
+    reason = check_command(cmd, powershell=False)
+    if not reason and IS_WINDOWS:  # Codex and Copilot run PowerShell on Windows under any name
+        reason = check_command(cmd, powershell=True)
+    return reason
 
 
 def block(reason: str) -> None:
@@ -149,32 +201,24 @@ def block(reason: str) -> None:
 
 
 def main() -> None:
-    try:
-        event = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
+    event = read_event()
+    if event is None:
         sys.exit(0)
-    if not isinstance(event, dict):
-        sys.exit(0)
-    tool = event.get("tool_name", "")
-    tool_input = event.get("tool_input")
-    if not isinstance(tool_input, dict):
-        sys.exit(0)
+    e = normalize_event(event)
+    tool_input = e["input"]
 
-    if tool == "Bash":
-        reason = check_bash(str(tool_input.get("command", "") or ""))
+    if e["kind"] == "shell":
+        reason = check_shell(str(tool_input.get("command", "") or ""), e["tool"])
         if reason:
             block(reason)
-    elif tool in ("Edit", "Write", "MultiEdit", "NotebookEdit", "Read"):
-        path = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
-        if is_secret_path(path):
-            block(f"{os.path.basename(str(path))} is a secrets file")
-    elif tool == "Grep":
-        if is_secret_path(tool_input.get("path") or ""):
-            block("the search targets a secrets file")
-    elif tool == "apply_patch":
-        for path in PATCH_FILE_LINE.findall(str(tool_input.get("command", "") or "")):
+    elif e["kind"] in ("edit", "read"):
+        for path in input_paths(tool_input):
             if is_secret_path(path):
-                block(f"{os.path.basename(path.strip())} is a secrets file")
+                block(f"{re.split(r'[/]', path.replace(chr(92), '/'))[-1]} is a secrets file")
+    elif e["kind"] == "patch":
+        for path in patch_paths(str(tool_input.get("command", "") or "")):
+            if is_secret_path(path):
+                block(f"{re.split(r'[/]', path.replace(chr(92), '/'))[-1]} is a secrets file")
     sys.exit(0)
 
 

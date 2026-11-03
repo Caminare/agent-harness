@@ -1,20 +1,26 @@
-#!/usr/bin/env python3
-"""Merge harness settings into an existing agent settings file without losing anything.
-
-Usage: merge_json.py <existing.json> <harness.json> [--dry-run]
+"""Merge harness settings into an agent's settings without losing the user's own entries.
 
 1. Permission lists (allow, ask, deny) are unioned, keeping existing order.
-2. Hook entries are appended per event only when their command is not already present.
+2. Hook entries the harness owns (any command that runs a script from
+   ~/.agents/hooks) are replaced, so re-running the installer after an update
+   never duplicates them. Everyone else's hooks are kept as they are.
 3. Other top-level keys from the harness are added only when missing; existing values win.
 """
 import json
 import os
-import sys
 import tempfile
 
+HOOK_COMMAND_KEYS = ("command", "args", "bash", "powershell", "commandWindows", "command_windows")
 
-def commands(entries: list) -> set:
-    return {hook.get("command") for entry in entries for hook in entry.get("hooks", [])}
+
+def is_owned(hook: dict) -> bool:
+    text = json.dumps([hook.get(key) for key in HOOK_COMMAND_KEYS]).replace("\\\\", "/")
+    return ".agents/hooks/" in text
+
+
+def entry_is_owned(entry: dict) -> bool:
+    hooks = entry.get("hooks") if isinstance(entry.get("hooks"), list) else [entry]
+    return any(is_owned(h) for h in hooks if isinstance(h, dict))
 
 
 def merge(existing: dict, harness: dict) -> dict:
@@ -29,38 +35,24 @@ def merge(existing: dict, harness: dict) -> dict:
             result["permissions"] = perms
         elif key == "hooks":
             hooks = dict(result.get("hooks", {}))
-            for event, entries in value.items():
-                current = list(hooks.get(event, []))
-                known = commands(current)
-                current += [e for e in entries if not commands([e]) <= known]
-                hooks[event] = current
+            for event in set(hooks) | set(value):
+                kept = [e for e in hooks.get(event, []) if not entry_is_owned(e)]
+                merged = kept + list(value.get(event, []))
+                if merged:
+                    hooks[event] = merged
+                else:
+                    hooks.pop(event, None)
             result["hooks"] = hooks
         elif key not in result:
             result[key] = value
     return result
 
 
-def main() -> None:
-    target, source = sys.argv[1], sys.argv[2]
-    dry_run = "--dry-run" in sys.argv[3:]
-    with open(target) as handle:
-        existing = json.load(handle)
-    with open(source) as handle:
-        harness = json.load(handle)
-    merged = merge(existing, harness)
-    if merged == existing:
-        print(f"  unchanged: {target}")
-        return
-    if dry_run:
-        print(f"  would merge harness settings into {target}")
-        return
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(target)), suffix=".tmp")
-    with os.fdopen(fd, "w") as handle:
-        json.dump(merged, handle, indent=2)
+def write_json_atomic(path: str, data: dict) -> None:
+    folder = os.path.dirname(os.path.abspath(path))
+    os.makedirs(folder, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=folder, suffix=".tmp")
+    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+        json.dump(data, handle, indent=2)
         handle.write("\n")
-    os.replace(tmp, target)
-    print(f"  merged harness settings into {target}")
-
-
-if __name__ == "__main__":
-    main()
+    os.replace(tmp, path)

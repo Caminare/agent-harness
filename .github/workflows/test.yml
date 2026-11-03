@@ -1,0 +1,62 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}${{ matrix.no-symlinks && ' / no symlinks' || '' }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, python: "3.8" }
+          - { os: ubuntu-latest, python: "3.13" }
+          - { os: macos-latest, python: "3.13" }
+          - { os: windows-latest, python: "3.13" }
+          - { os: windows-latest, python: "3.13", no-symlinks: true }
+    env:
+      AGENTS_HARNESS_NO_SYMLINKS: ${{ matrix.no-symlinks && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Git identity for test repositories
+        run: |
+          git config --global user.email ci@example.com
+          git config --global user.name ci
+      - name: Unit tests (hooks and installer)
+        run: python -m unittest discover -s tests -v
+
+      - name: Installer smoke test (Unix, install.sh)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          cp -R "$GITHUB_WORKSPACE" "$HOME/.agents"
+          "$HOME/.agents/install.sh" --dry-run --no-plugins
+          "$HOME/.agents/install.sh" --no-plugins
+          "$HOME/.agents/install.sh" --no-plugins | tee second-run.txt
+          ! grep -q "back up" second-run.txt
+          test -f "$HOME/.claude/skills/setup-repo/SKILL.md"
+          test -f "$HOME/.copilot/hooks/agents-harness.json"
+
+      - name: Installer smoke test (Windows, install.ps1)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Copy-Item -Recurse $env:GITHUB_WORKSPACE "$HOME\.agents"
+          & "$HOME\.agents\install.ps1" --dry-run --no-plugins
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          & "$HOME\.agents\install.ps1" --no-plugins
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $second = & "$HOME\.agents\install.ps1" --no-plugins | Out-String
+          Write-Output $second
+          if ($second -match 'back up') { Write-Error 'second run was not idempotent'; exit 1 }
+          if (-not (Test-Path "$HOME\.claude\skills\setup-repo\SKILL.md")) { exit 1 }
+          if (-not (Test-Path "$HOME\.copilot\hooks\agents-harness.json")) { exit 1 }
+          '{"tool_name":"Bash","tool_input":{"command":"git push --force"}}' | python "$HOME\.agents\hooks\guard.py"
+          if ($LASTEXITCODE -ne 2) { Write-Error 'guard did not block'; exit 1 }
+          exit 0
