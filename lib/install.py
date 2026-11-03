@@ -136,7 +136,9 @@ class Installer:
 
     def powershell_command(self, name: str) -> str:
         quote = lambda s: "'" + s.replace("'", "''") + "'"  # noqa: E731
-        return f"& {quote(self.python)} {quote(self.script(name))}"
+        # PowerShell maps a native command's non-zero exit to 1 unless it is passed on explicitly,
+        # which would turn the guard's "blocked" (2) into a generic hook error.
+        return f"& {quote(self.python)} {quote(self.script(name))}; exit $LASTEXITCODE"
 
     def windows_command(self, name: str) -> str:
         parts = [self.python, self.script(name)]

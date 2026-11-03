@@ -10,10 +10,10 @@ foreach ($candidate in $candidates) {
     if (-not (Get-Command $exe -ErrorAction SilentlyContinue)) { continue }
     $prefix = @($candidate | Select-Object -Skip 1)
     # The Microsoft Store "python" alias exists without a real interpreter; check it runs.
-    & $exe @prefix -c 'import sys; sys.exit(sys.version_info < (3, 8))' 2>$null
+    & $exe @prefix -c 'import sys; sys.exit(sys.version_info < (3, 10))' 2>$null
     if ($LASTEXITCODE -ne 0) { continue }
     & $exe @prefix $installer @args
     exit $LASTEXITCODE
 }
-Write-Error 'Python 3.8 or later is required (the hooks run on it). Install it from python.org and run this again.'
+Write-Error 'Python 3.10 or later is required (the hooks run on it). Install it from python.org and run this again.'
 exit 1

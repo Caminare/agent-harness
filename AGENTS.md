@@ -1,6 +1,6 @@
 # Working agreement
 
-Personal rules for every coding agent (Claude Code, Codex, others) in every repository.
+Personal rules for every coding agent (Claude Code, Codex, GitHub Copilot, others) in every repository, on Windows, macOS and Linux.
 A repository's own AGENTS.md adds project facts on top of this file.
 
 ## Communication
@@ -26,7 +26,7 @@ A repository's own AGENTS.md adds project facts on top of this file.
 6. Review with the mattpocock `code-review` skill. Before I merge risky or security-sensitive changes, offer an `adversarial-reviewer` pass as well.
 
 ## Skills: which one to use
-The mattpocock skills plugin is installed alongside my own skills. Where they overlap, use these:
+The mattpocock skills plugin is installed alongside my own skills in every agent. Where they overlap, use these:
 1. PR description: `pr-description` (mine; writes `pr_description.md` with Jira context), not `pr`.
 2. Bugs: `diagnosing-bugs`; add `debug-issue` when the code-review-graph tools are loaded.
 3. Reviews: `code-review` by default; `review-changes` for graph-based blast radius; `adversarial-reviewer` for a hostile pre-merge pass; `thermo-nuclear-code-quality-review` only when I ask.
@@ -37,7 +37,8 @@ The mattpocock skills plugin is installed alongside my own skills. Where they ov
 1. Keep diffs scoped to the request. Do not refactor, rename, or reformat unrelated code; suggest it instead.
 2. Prefer deep modules (small interface, substantial implementation; see the `codebase-design` skill) and self-documenting code. Comments explain why, not what.
 3. Follow the project's existing conventions over your defaults.
-4. Never read, print, or edit secrets (`.env`, keys, tokens). Never put them in code, logs, commits, or memory.
+4. Match the shell you are given: PowerShell syntax on Windows unless Git Bash is in use, POSIX shell elsewhere. Keep scripts you add to a repo portable, or provide both `.sh` and `.ps1`.
+5. Never read, print, or edit secrets (`.env`, keys, tokens). Never put them in code, logs, commits, or memory.
 
 ## Git
 1. Never commit unless I explicitly ask or approve that specific commit. Approval covers one commit, not the rest of the session. When work is ready, propose the commit message and wait.
