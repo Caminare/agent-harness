@@ -99,7 +99,7 @@ On Windows, a link is a symlink when your account may create one (Developer Mode
 
 8. **RTK.** Install it (`brew install rtk-ai/tap/rtk`, `winget install rtk-ai.rtk`), then `rtk init -g`, `rtk init -g --codex` and `rtk init -g --copilot`. Run `git -C ~/.agents diff`; keep one RTK block and commit.
 
-9. **ai-memory.** Inspect and run its installer, then `ai-memory setup --yes --agent claude-code --agent codex`. Run `git -C ~/.agents diff` again and commit what is intended.
+9. **ai-memory.** Inspect and run its installer, then `ai-memory setup --yes --agent claude-code --agent codex --agent copilot-cli --agent opencode` (drop the agents you do not use). For opencode it runs `opencode --version` to pick the plugin dialect, so opencode must be on your PATH. Run `git -C ~/.agents diff` again and commit what is intended.
 
 10. **Repositories (optional, no install step).** Everything above already applies in every repo. To add project facts to one, open it in any agent and run the `setup-repo` skill (`/setup-repo` in Claude Code, Copilot and opencode, `$setup-repo` in Codex). The agent reads the code, drafts `AGENTS.md` with the repo's real build and test commands (each run once to confirm it works), migrates any project `CLAUDE.md` or `.github/copilot-instructions.md`, and waits for your approval before writing. It then offers `setup-matt-pocock-skills`, which configures the issue tracker, labels and docs layout that `to-spec`, `to-tickets` and `triage` use.
 
@@ -133,5 +133,4 @@ flowchart LR
 1. Hooks are guardrails, not a sandbox. Use each agent's sandbox for real isolation.
 2. CI runs the rendered hook commands through sh, bash, PowerShell and cmd. The opencode plugin is loaded in Node and exercised against fake contexts for both opencode plugin APIs. What CI cannot run is each agent itself: Codex's Windows hook shell, Copilot's tool names and opencode's hook payloads are taken from their documentation and published types, so the first session in each agent is the real check.
 3. `context: fork` and `disable-model-invocation` are Claude Code fields. Codex, Copilot and opencode run forked skills inline (opencode does honor `disable-model-invocation`); Codex gets the manual-only policy for the strict review and `setup-repo` through `agents/openai.yaml`.
-4. ai-memory currently covers Claude Code and Codex, not Copilot or opencode.
-5. opencode also reads `~/.claude/skills`, so it sees the harness skills twice; both entries point at the same files and opencode keeps one.
+4. opencode also reads `~/.claude/skills`, so it sees the harness skills twice; both entries point at the same files and opencode keeps one.
