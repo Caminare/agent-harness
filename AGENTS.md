@@ -1,6 +1,6 @@
 # Working agreement
 
-Personal rules for every coding agent (Claude Code, Codex, GitHub Copilot, others) in every repository, on Windows, macOS and Linux.
+Personal rules for every coding agent (Claude Code, Codex, GitHub Copilot, opencode, others) in every repository, on Windows, macOS and Linux.
 A repository's own AGENTS.md adds project facts on top of this file.
 
 ## Communication

@@ -1,6 +1,6 @@
 # Agent harness
 
-One agent-agnostic setup for **Claude Code, Codex and GitHub Copilot**, on **Windows, macOS and Linux**.
+One agent-agnostic setup for **Claude Code, Codex, GitHub Copilot and opencode**, on **Windows, macOS and Linux**.
 Everything lives in `~/.agents`; each agent gets a thin link or a generated bridge to it.
 
 ```mermaid
@@ -11,14 +11,18 @@ flowchart LR
   A -->|link| CX["~/.codex/AGENTS.md"]
   A -->|"@import"| CL["~/.claude/CLAUDE.md"]
   A -->|link| CP["~/.copilot/copilot-instructions.md"]
+  A -->|link| OC["~/.config/opencode/AGENTS.md"]
   S -->|read natively| CODEX[Codex]
   S -->|read natively| COPILOT[Copilot]
+  S -->|read natively| OPENCODE[opencode]
   S -->|per-skill links| CS["~/.claude/skills"]
   K --> CH["~/.claude/settings.json"]
   K --> XH["~/.codex/hooks.json"]
   K --> PH["~/.copilot/hooks/agents-harness.json"]
+  K --> OP["~/.config/opencode/plugins/agents-harness.js"]
   P["repo AGENTS.md + .agents/"] --> CODEX
   P --> COPILOT
+  P --> OPENCODE
   P --> CLAUDE[Claude Code]
 ```
 
@@ -29,10 +33,11 @@ flowchart LR
 | Claude Code | `~/.claude/CLAUDE.md`, a one-line import of `~/.agents/AGENTS.md` | `~/.claude/skills/*`, linked to `~/.agents/skills/*` | `~/.claude/settings.json` | repo `AGENTS.md` (v2.1.277+, when the repo has no `CLAUDE.md`) |
 | Codex | `~/.codex/AGENTS.md`, linked | `~/.agents/skills`, natively | `~/.codex/hooks.json` | repo `AGENTS.md` |
 | GitHub Copilot | `~/.copilot/copilot-instructions.md`, linked | `~/.agents/skills`, natively | `~/.copilot/hooks/agents-harness.json` | repo `AGENTS.md` (also `CLAUDE.md` and `.github/copilot-instructions.md`, combined) |
+| opencode | `~/.config/opencode/AGENTS.md`, linked | `~/.agents/skills`, natively | `~/.config/opencode/plugins/agents-harness.js`, a plugin that runs the same hooks | repo `AGENTS.md` |
 
 Claude Code and Copilot have no user-level `AGENTS.md`, which is why those two bridges exist. You never edit them; edit `~/.agents/AGENTS.md`.
 
-On Windows, a link is a symlink when your account may create one (Developer Mode or admin). Otherwise skill folders become directory junctions, which need no rights, and the two instruction files become copies the installer refreshes on every run.
+On Windows, a link is a symlink when your account may create one (Developer Mode or admin). Otherwise skill folders become directory junctions, which need no rights, and the instruction files become copies the installer refreshes on every run.
 
 ## Layout
 
@@ -45,13 +50,13 @@ On Windows, a link is a symlink when your account may create one (Developer Mode
 | `hooks/format.py` | After each edit: runs the repo's formatter on the edited files, only where the repo already uses one |
 | `lib/install.py` | The installer, one implementation for every OS |
 | `install.sh`, `install.ps1` | Launchers: macOS, Linux, WSL and Git Bash; Windows PowerShell |
-| `adapters/` | Claude settings (permissions, no AI attribution) and the CLAUDE.md bridge |
+| `adapters/` | Claude settings (permissions, no AI attribution), the CLAUDE.md bridge, and the opencode plugin template |
 | `templates/project/` | Reference `AGENTS.md` the `setup-repo` skill starts from |
 | `tests/` | Hook and installer tests, run in CI on Ubuntu, macOS and Windows |
 
 ## Setup
 
-1. **Prerequisites.** Python 3.10 or later (the hooks run on it), git, and the agents you use: Claude Code v2.1.277 or later, Codex, GitHub Copilot CLI. Node.js and pipx for the optional tools below. On Windows, Git for Windows is recommended (Claude Code runs hooks through Git Bash when present).
+1. **Prerequisites.** Python 3.10 or later (the hooks run on it), git, and the agents you use: Claude Code v2.1.277 or later, Codex, GitHub Copilot CLI, opencode 1.18.29 or later. Node.js and pipx for the optional tools below. On Windows, Git for Windows is recommended (Claude Code runs hooks through Git Bash when present).
 
 2. **Clone the harness into `~/.agents`.**
    ```bash
@@ -69,9 +74,9 @@ On Windows, a link is a symlink when your account may create one (Developer Mode
    ```powershell
    & "$HOME\.agents\install.ps1" --dry-run; & "$HOME\.agents\install.ps1"
    ```
-   It links the instructions and skills for Claude Code, Codex and Copilot, writes their hook configuration (guard and format) (merging into existing Claude and Codex settings without removing your entries), and installs the mattpocock skills plugin in every agent it finds (`--no-plugins` skips that). Replaced files go to `~/.agents-backup/`.
+   It links the instructions and skills for Claude Code, Codex, Copilot and opencode, writes their hook configuration (guard and format; for opencode a small plugin that calls the same hooks), merging into existing Claude and Codex settings without removing your entries, and installs the mattpocock skills in every agent it finds (`--no-plugins` skips that). opencode has no plugin marketplace, so it gets them as copies in `~/.config/opencode/skills` via `npx skills`; update them with `npx skills update --global`. Replaced files go to `~/.agents-backup/`.
 
-4. **Trust the hooks and restart.** Codex: `/hooks`, trust the two harness hooks. Restart Claude Code and Copilot; check `/hooks` in Claude Code.
+4. **Trust the hooks and restart.** Codex: `/hooks`, trust the two harness hooks. Restart Claude Code, Copilot and opencode; check `/hooks` in Claude Code.
 
 5. **Remove what is replaced.** `claude plugin uninstall caveman@caveman`, plus its Codex skill folder if you added one. Delete mattpocock skills you once copied by hand (`npx skills add`); the installer warns about them.
 
@@ -81,7 +86,7 @@ On Windows, a link is a symlink when your account may create one (Developer Mode
    codex mcp add atlassian --url https://mcp.atlassian.com/v2/mcp && codex mcp login atlassian
    claude mcp add --transport stdio --scope project playwright -- npx -y @playwright/mcp@<pinned-version>
    ```
-   In Copilot CLI, add the same Atlassian URL with `/mcp add`. Log in to Atlassian via `/mcp` in each agent.
+   In Copilot CLI, add the same Atlassian URL with `/mcp add`; in opencode, with `opencode mcp add`. Log in to Atlassian via `/mcp` in each agent.
 
 7. **Code graph**, per repository:
    ```bash
@@ -96,7 +101,7 @@ On Windows, a link is a symlink when your account may create one (Developer Mode
 
 9. **ai-memory.** Inspect and run its installer, then `ai-memory setup --yes --agent claude-code --agent codex`. Run `git -C ~/.agents diff` again and commit what is intended.
 
-10. **Repositories (optional, no install step).** Everything above already applies in every repo. To add project facts to one, open it in any agent and run the `setup-repo` skill (`/setup-repo` in Claude Code and Copilot, `$setup-repo` in Codex). The agent reads the code, drafts `AGENTS.md` with the repo's real build and test commands (each run once to confirm it works), migrates any project `CLAUDE.md` or `.github/copilot-instructions.md`, and waits for your approval before writing. It then offers `setup-matt-pocock-skills`, which configures the issue tracker, labels and docs layout that `to-spec`, `to-tickets` and `triage` use.
+10. **Repositories (optional, no install step).** Everything above already applies in every repo. To add project facts to one, open it in any agent and run the `setup-repo` skill (`/setup-repo` in Claude Code, Copilot and opencode, `$setup-repo` in Codex). The agent reads the code, drafts `AGENTS.md` with the repo's real build and test commands (each run once to confirm it works), migrates any project `CLAUDE.md` or `.github/copilot-instructions.md`, and waits for your approval before writing. It then offers `setup-matt-pocock-skills`, which configures the issue tracker, labels and docs layout that `to-spec`, `to-tickets` and `triage` use.
 
 11. **Check the setup.**
     1. Each agent reports both `~/.agents/AGENTS.md` and the repo `AGENTS.md` when asked "Summarize the current instructions" (`/context` in Claude Code, `/instructions` in Copilot).
@@ -126,6 +131,7 @@ flowchart LR
 ## Known limits
 
 1. Hooks are guardrails, not a sandbox. Use each agent's sandbox for real isolation.
-2. CI runs the rendered hook commands through sh, bash, PowerShell and cmd. What it cannot run is each agent itself: Codex's Windows hook shell and Copilot's tool names are taken from their documentation, so the first session in each agent is the real check.
-3. `context: fork` and `disable-model-invocation` are Claude Code fields. Codex and Copilot run forked skills inline; Codex gets the manual-only policy for the strict review and `setup-repo` through `agents/openai.yaml`.
-4. ai-memory currently covers Claude Code and Codex, not Copilot.
+2. CI runs the rendered hook commands through sh, bash, PowerShell and cmd. The opencode plugin is loaded in Node and exercised against fake contexts for both opencode plugin APIs. What CI cannot run is each agent itself: Codex's Windows hook shell, Copilot's tool names and opencode's hook payloads are taken from their documentation and published types, so the first session in each agent is the real check.
+3. `context: fork` and `disable-model-invocation` are Claude Code fields. Codex, Copilot and opencode run forked skills inline (opencode does honor `disable-model-invocation`); Codex gets the manual-only policy for the strict review and `setup-repo` through `agents/openai.yaml`.
+4. ai-memory currently covers Claude Code and Codex, not Copilot or opencode.
+5. opencode also reads `~/.claude/skills`, so it sees the harness skills twice; both entries point at the same files and opencode keeps one.

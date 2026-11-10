@@ -38,7 +38,7 @@ class Install(unittest.TestCase):
         shutil.copytree(REPO, self.harness, ignore=shutil.ignore_patterns(".git", "__pycache__"))
         self.env = {**os.environ, "HOME": self.home, "USERPROFILE": self.home,
                     "PATH": os.path.dirname(sys.executable) + os.pathsep + os.environ.get("PATH", "")}
-        for var in ("CODEX_HOME", "COPILOT_HOME", "XDG_CACHE_HOME"):
+        for var in ("CODEX_HOME", "COPILOT_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME"):
             self.env.pop(var, None)
 
     def tearDown(self):
@@ -61,12 +61,13 @@ class Install(unittest.TestCase):
         with open(self.path(*parts), encoding="utf-8") as handle:
             return handle.read()
 
-    def test_fresh_install_configures_all_three_agents(self):
+    def test_fresh_install_configures_all_four_agents(self):
         code, out = self.install()
         self.assertEqual(code, 0, out)
         agents_md = self.read(".agents", "AGENTS.md")
         self.assertEqual(self.read(".codex", "AGENTS.md"), agents_md)
         self.assertEqual(self.read(".copilot", "copilot-instructions.md"), agents_md)
+        self.assertEqual(self.read(".config", "opencode", "AGENTS.md"), agents_md)
         self.assertIn("@~/.agents/AGENTS.md", self.read(".claude", "CLAUDE.md"))
         for skill in os.listdir(os.path.join(self.harness, "skills")):
             linked = self.path(".claude", "skills", skill, "SKILL.md")
@@ -81,14 +82,34 @@ class Install(unittest.TestCase):
         copilot = self.read_json(".copilot", "hooks", "agents-harness.json")
         self.assertEqual(copilot["version"], 1)
         self.assertEqual(set(copilot["hooks"]), {"PreToolUse", "PostToolUse"})
+        plugin = self.read(".config", "opencode", "plugins", "agents-harness.js")
+        self.assertIn(json.dumps(sys.executable), plugin)
+        self.assertNotIn("__PYTHON__", plugin)
+        self.assertNotIn("__HOOKS__", plugin)
 
     def test_rerun_changes_nothing(self):
         self.install()
-        before = (self.read(".claude", "settings.json"), self.read(".codex", "hooks.json"))
+        files = ((".claude", "settings.json"), (".codex", "hooks.json"),
+                 (".config", "opencode", "plugins", "agents-harness.js"))
+        before = [self.read(*f) for f in files]
         code, out = self.install()
         self.assertEqual(code, 0, out)
         self.assertNotIn("back up", out)
-        self.assertEqual((self.read(".claude", "settings.json"), self.read(".codex", "hooks.json")), before)
+        self.assertEqual([self.read(*f) for f in files], before)
+
+    @unittest.skipUnless(shutil.which("node"), "node is needed to load the opencode plugin")
+    def test_opencode_plugin_blocks_and_formats_with_both_plugin_apis(self):
+        self.assertEqual(self.install()[0], 0)
+        repo = os.path.join(self.tmp.name, "repo")
+        os.makedirs(os.path.join(repo, ".agents"))
+        os.makedirs(os.path.join(repo, "src"))
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+        with open(os.path.join(repo, "src", "a.txt"), "w", encoding="utf-8") as handle:
+            handle.write("x\n")
+        check = os.path.join(REPO, "tests", "opencode_plugin_check.mjs")
+        plugin = self.path(".config", "opencode", "plugins", "agents-harness.js")
+        result = subprocess.run(["node", check, plugin, repo], capture_output=True, env=self.env, timeout=120)
+        self.assertEqual(result.returncode, 0, (result.stdout + result.stderr).decode("utf-8", "replace"))
 
     def test_keeps_user_settings_and_replaces_old_harness_hooks(self):
         os.makedirs(self.path(".claude"))
@@ -195,6 +216,13 @@ class Install(unittest.TestCase):
                              f'[ "$2" = list ] && grep -q "{cli} plugin install\\|{cli} plugin add" "{log}" '
                              '&& echo mattpocock-skills\nexit 0\n')
             os.chmod(os.path.join(bin_dir, cli), 0o755)
+        opencode_skills = self.path(".config", "opencode", "skills", "tdd")
+        fakes = {"opencode": "exit 0\n",
+                 "npx": f'echo "npx $*" >> "{log}"\nmkdir -p "{opencode_skills}"\nexit 0\n'}
+        for cli, body in fakes.items():
+            with open(os.path.join(bin_dir, cli), "w") as handle:
+                handle.write("#!/bin/sh\n" + body)
+            os.chmod(os.path.join(bin_dir, cli), 0o755)
         self.env["PATH"] = bin_dir + os.pathsep + self.env["PATH"]
         script = os.path.join(self.harness, "lib", "install.py")
         for _ in range(2):
@@ -203,6 +231,9 @@ class Install(unittest.TestCase):
         self.assertEqual(calls.count("claude plugin install mattpocock-skills@claude-plugins-official"), 1)
         self.assertEqual(calls.count("codex plugin add mattpocock-skills@mattpocock"), 1)
         self.assertEqual(calls.count("copilot plugin install mattpocock-skills@mattpocock"), 1)
+        self.assertEqual(calls.count("npx --yes skills@1 add mattpocock/skills --global --agent opencode "
+                                     "--skill * --copy --yes"), 1, calls)
+        self.assertFalse(os.path.exists(self.path(".agents", "skills", "tdd")), "nothing copied into the harness")
 
 
 if __name__ == "__main__":

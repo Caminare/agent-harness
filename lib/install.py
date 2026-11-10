@@ -1,4 +1,4 @@
-"""Agent harness installer for Claude Code, Codex and GitHub Copilot, on Windows, macOS and Linux.
+"""Agent harness installer for Claude Code, Codex, GitHub Copilot and opencode, on Windows, macOS and Linux.
 
 Run through install.sh (macOS, Linux, WSL, Git Bash) or install.ps1 (Windows PowerShell).
 One source of truth in ~/.agents; each agent gets thin links or generated bridges.
@@ -30,6 +30,10 @@ CLAUDE_MATCHERS = {"PreToolUse": "Bash|PowerShell|Edit|Write|MultiEdit|NotebookE
 CODEX_MATCHERS = {"PreToolUse": "^Bash$|^apply_patch$", "PostToolUse": "^apply_patch$"}
 PLUGIN = "mattpocock-skills"
 MATT_SKILL_NAMES = ("tdd", "grill-me", "to-spec", "code-review")
+# opencode has no mattpocock plugin; the skills CLI copies the files. --copy keeps them out of
+# ~/.agents/skills (its default "canonical" folder), which Codex and Copilot also read.
+OPENCODE_SKILLS_CMD = ["skills@1", "add", "mattpocock/skills", "--global", "--agent", "opencode",
+                       "--skill", "*", "--copy", "--yes"]
 
 
 class Installer:
@@ -40,6 +44,8 @@ class Installer:
         self.copied_files = []
         self.python = sys.executable
         self.copilot_home = os.environ.get("COPILOT_HOME") or os.path.join(HOME, ".copilot")
+        self.opencode_home = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config"),
+                                          "opencode")
 
     # ---------- output and filesystem primitives ----------
     def say(self, text: str) -> None:
@@ -220,6 +226,17 @@ class Installer:
         hooks_file = os.path.join(self.copilot_home, "hooks", "agents-harness.json")
         self.write_text(hooks_file, json.dumps(self.copilot_hooks(), indent=2) + "\n")
 
+    def opencode_plugin(self) -> str:
+        template = read(os.path.join(HARNESS, "adapters", "opencode", "agents-harness.js"))
+        return (template.replace("__PYTHON__", json.dumps(self.python))
+                .replace("__HOOKS__", json.dumps(os.path.join(HARNESS, "hooks"))))
+
+    def opencode(self) -> None:
+        self.say("opencode")
+        self.link_file(os.path.join(HARNESS, "AGENTS.md"), os.path.join(self.opencode_home, "AGENTS.md"))
+        self.say("  skills: read natively from ~/.agents/skills")
+        self.write_text(os.path.join(self.opencode_home, "plugins", "agents-harness.js"), self.opencode_plugin())
+
     def remove_stale_links(self, skills_dir: str) -> None:
         if not os.path.isdir(skills_dir):
             return
@@ -259,6 +276,30 @@ class Installer:
                 result = subprocess.run([exe, *args], capture_output=True, timeout=300)
                 ok = result.returncode == 0 or b"already" in (result.stdout + result.stderr).lower()
                 self.say(f"  {'ran' if ok else 'FAILED'}: {cli} {' '.join(args)}")
+        self.install_opencode_skills()
+
+    def install_opencode_skills(self) -> None:
+        if not shutil.which("opencode"):
+            self.say("  skip: opencode not found")
+            return
+        if os.path.isdir(os.path.join(self.opencode_home, "skills", "tdd")):
+            self.say("  ok: opencode skills copied (update with: npx skills update --global)")
+            return
+        npx = shutil.which("npx")
+        command = " ".join(f"'{a}'" if a == "*" else a for a in ["npx", *OPENCODE_SKILLS_CMD])
+        if not npx:
+            self.say(f"  skip: npx not found; for opencode run: {command}")
+            return
+        if self.dry:
+            self.say(f"  would run: {command}")
+            return
+        try:
+            result = subprocess.run([npx, "--yes", *OPENCODE_SKILLS_CMD], capture_output=True,
+                                    stdin=subprocess.DEVNULL, timeout=600)
+            ok = result.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            ok = False
+        self.say(f"  {'ran' if ok else 'FAILED'}: {command}")
 
     def installed(self, exe: str) -> bool:
         try:
@@ -273,6 +314,7 @@ class Installer:
         self.codex()
         self.claude()
         self.copilot()
+        self.opencode()
         if self.plugins:
             self.install_plugins()
         self.say("")
@@ -282,7 +324,7 @@ class Installer:
             for path in self.copied_files:
                 self.say(f"  {path}")
             self.say("(Turn on Windows Developer Mode to get real links instead.)")
-        self.say("Next: trust the hooks (Codex: /hooks), then restart Claude Code, Codex and Copilot.")
+        self.say("Next: trust the hooks (Codex: /hooks), then restart Claude Code, Codex, Copilot and opencode.")
         self.say("Optional, per repository: ask the agent to run the setup-repo skill there.")
 
 
@@ -351,7 +393,7 @@ def make_dir_link(target: str, path: str) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Install the agent harness for Claude Code, Codex and Copilot.")
+    parser = argparse.ArgumentParser(description="Install the agent harness for Claude Code, Codex, Copilot and opencode.")
     parser.add_argument("--dry-run", action="store_true", help="show what would change without changing it")
     parser.add_argument("--no-plugins", action="store_true", help="skip the mattpocock skills plugin")
     args = parser.parse_args()

@@ -24,6 +24,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - name: Git identity for test repositories
         run: |
           git config --global user.email ci@example.com
@@ -42,6 +45,8 @@ jobs:
           ! grep -q "back up" second-run.txt
           test -f "$HOME/.claude/skills/setup-repo/SKILL.md"
           test -f "$HOME/.copilot/hooks/agents-harness.json"
+          cmp "$HOME/.agents/AGENTS.md" "$HOME/.config/opencode/AGENTS.md"
+          node -e "import(require('url').pathToFileURL(process.argv[1])).then(m => { if (m.default.id !== 'agents-harness') process.exit(1) })" "$HOME/.config/opencode/plugins/agents-harness.js"
 
       - name: Installer smoke test (Windows, install.ps1)
         if: runner.os == 'Windows'
@@ -57,6 +62,9 @@ jobs:
           if ($second -match 'back up') { Write-Error 'second run was not idempotent'; exit 1 }
           if (-not (Test-Path "$HOME\.claude\skills\setup-repo\SKILL.md")) { exit 1 }
           if (-not (Test-Path "$HOME\.copilot\hooks\agents-harness.json")) { exit 1 }
+          if (-not (Test-Path "$HOME\.config\opencode\AGENTS.md")) { exit 1 }
+          node -e "import(require('url').pathToFileURL(process.argv[1])).then(m => { if (m.default.id !== 'agents-harness') process.exit(1) })" "$HOME\.config\opencode\plugins\agents-harness.js"
+          if ($LASTEXITCODE -ne 0) { Write-Error 'opencode plugin did not load'; exit 1 }
           '{"tool_name":"Bash","tool_input":{"command":"git push --force"}}' | python "$HOME\.agents\hooks\guard.py"
           if ($LASTEXITCODE -ne 2) { Write-Error 'guard did not block'; exit 1 }
           exit 0
