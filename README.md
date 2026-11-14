@@ -149,6 +149,18 @@ Run the main session on a strong model and hand bounded, low-judgement work to a
 2. **Keep on the main model:** design and planning, subtle debugging, security-sensitive changes, reviews you rely on, and anything where the subagent would need most of your conversation to do it right.
 3. **Ask for it explicitly:** "use a Haiku subagent to summarize these logs", "have a cheap subagent implement ticket 3 and run its tests".
 
+Agents only delegate this way when their instructions say so. Paste this into `~/.agents/AGENTS.md` (every agent) or a repo's `AGENTS.md` / `CLAUDE.md`:
+
+```markdown
+## Subagents: delegate cheap work
+Reason: a subagent on a small model spends its tokens at the small model's price and returns only a summary to this context.
+1. Delegate to a subagent on the smallest capable model (Claude: Haiku) for: reading or summarizing large text (logs, long docs, transcripts, big diffs); searching and mapping the codebase; implementing a well-defined ticket or spec with clear tests; small mechanical edits (renames, boilerplate, test scaffolding).
+2. Keep on the main model: design and planning, subtle debugging, security-sensitive changes, and reviews.
+3. Brief the subagent fully: the goal, exact file paths, constraints, the command that verifies the work, and the shape of the answer (for example, at most 10 bullets with file:line references).
+4. Ask for a short result, never raw dumps. Check its claims and run the verification yourself before reporting done.
+5. Do not delegate when explaining the task costs more than doing it, or when the subagent would need most of this conversation.
+```
+
 How to set it up in each agent:
 
 | Agent | Default model for subagents | A named cheap subagent |
