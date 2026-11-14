@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.request
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 IS_WINDOWS = os.name == "nt"
@@ -35,7 +36,7 @@ class Install(unittest.TestCase):
         self.home = os.path.join(self.tmp.name, "home user")  # a space, like many Windows profiles
         os.makedirs(self.home)
         self.harness = os.path.join(self.home, ".agents")
-        shutil.copytree(REPO, self.harness, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+        shutil.copytree(REPO, self.harness, ignore=shutil.ignore_patterns(".git", "__pycache__", "local"))
         self.env = {**os.environ, "HOME": self.home, "USERPROFILE": self.home,
                     "PATH": os.path.dirname(sys.executable) + os.pathsep + os.environ.get("PATH", "")}
         for var in ("CODEX_HOME", "COPILOT_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME"):
@@ -60,6 +61,118 @@ class Install(unittest.TestCase):
     def read(self, *parts):
         with open(self.path(*parts), encoding="utf-8") as handle:
             return handle.read()
+
+    def fake_cli(self, name: str, output: str) -> None:
+        """A command on PATH that prints one line, as a .cmd on Windows and a shell script elsewhere."""
+        bin_dir = os.path.join(self.tmp.name, "fake-bin")
+        os.makedirs(bin_dir, exist_ok=True)
+        if IS_WINDOWS:
+            with open(os.path.join(bin_dir, name + ".cmd"), "w") as handle:
+                handle.write(f"@echo {output}\n")
+        else:
+            with open(os.path.join(bin_dir, name), "w") as handle:
+                handle.write(f"#!/bin/sh\necho {output}\n")
+            os.chmod(os.path.join(bin_dir, name), 0o755)
+        if not self.env["PATH"].startswith(bin_dir):
+            self.env["PATH"] = bin_dir + os.pathsep + self.env["PATH"]
+
+    def fake_optmem(self) -> None:
+        """Stands in for OptMem's memo: `init` creates the store and prints the setup block."""
+        os.makedirs(self.path(".optmem"))
+        with open(self.path(".optmem", "memo"), "w", encoding="utf-8") as handle:
+            handle.write("import os, sys\n"
+                         "assert sys.argv[1:] == ['init']\n"
+                         "os.makedirs(os.path.expanduser('~/.optmem/memory'), exist_ok=True)\n"
+                         "print('Created ~/.optmem/memory.\\n\\nPaste this at the top of your AGENTS.md:\\n')\n"
+                         "print('## Memory\\n\\nYour memory is OptMem:\\n- The tool is `~/.optmem/memo`\\n\\n'\n"
+                         "      'Run `~/.optmem/memo wake` before any other tool call.')\n")
+
+    def test_optmem_layer_reaches_every_agent_and_can_be_removed(self):
+        self.fake_optmem()
+        code, out = self.install("--memory", "optmem")
+        self.assertEqual(code, 0, out)
+        agents_md = self.read(".agents", "AGENTS.md")
+        layer = self.read(".agents", "local", "memory.md")
+        self.assertTrue(layer.startswith("## Memory"), layer)
+        self.assertIn("python \"" if IS_WINDOWS else "`~/.optmem/memo wake`", layer)
+        for parts in ((".codex", "AGENTS.md"), (".copilot", "copilot-instructions.md"),
+                      (".config", "opencode", "AGENTS.md")):
+            self.assertEqual(self.read(*parts), agents_md.rstrip("\n") + "\n\n" + layer, parts)
+        self.assertIn("@~/.agents/local/memory.md", self.read(".claude", "CLAUDE.md"))
+        self.assertEqual(self.read_json(".agents", "local", "choices.json")["memory"], "optmem")
+
+        code, out = self.install()  # the choice is remembered
+        self.assertEqual(code, 0, out)
+        self.assertIn("Memory layer: optmem", out)
+        self.assertNotIn("back up", out)
+
+        code, out = self.install("--memory", "none")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.read(".codex", "AGENTS.md"), agents_md)
+        self.assertNotIn("memory.md", self.read(".claude", "CLAUDE.md"))
+        self.assertFalse(os.path.exists(self.path(".agents", "local", "memory.md")))
+        self.assertTrue(os.path.isdir(self.path(".optmem", "memory")), "memories are never touched")
+
+    def test_ai_memory_layer_moves_its_rules_out_of_agents_md(self):
+        self.assertNotIn("memory_query", self.read(".agents", "AGENTS.md"))
+        code, out = self.install("--memory", "ai-memory")
+        self.assertEqual(code, 0, out)
+        self.assertIn("memory_query", self.read(".copilot", "copilot-instructions.md"))
+        self.assertIn("memory_query", self.read(".agents", "local", "memory.md"))
+
+    def test_optmem_download_must_match_the_pinned_checksum(self):
+        bogus = os.path.join(self.tmp.name, "memo")
+        with open(bogus, "w") as handle:
+            handle.write("print('not OptMem')\n")
+        self.env["AGENTS_HARNESS_OPTMEM_URL"] = "file:" + urllib.request.pathname2url(bogus)
+        code, out = self.install("--memory", "optmem")
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("does not match the pinned checksum", out)
+        self.assertFalse(os.path.exists(self.path(".optmem", "memo")))
+
+    def test_cache_modes_set_and_undo_only_harness_values(self):
+        self.fake_cli("opencode", "2.3.0")
+        user_config = {"model": "anthropic/claude-sonnet-5-5",
+                       "providers": {"anthropic": {"settings": {"baseURL": "https://proxy.example"}}}}
+        os.makedirs(self.path(".config", "opencode"))
+        with open(self.path(".config", "opencode", "opencode.json"), "w") as handle:
+            json.dump(user_config, handle)
+
+        code, out = self.install("--cache", "long")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.read_json(".claude", "settings.json")["promptCacheTtl"], "1h")
+        config = self.read_json(".config", "opencode", "opencode.json")
+        self.assertEqual(config["providers"]["anthropic"]["settings"],
+                         {"baseURL": "https://proxy.example", "cache": {"ttl": "1h"}})
+        self.assertEqual(config["providers"]["openai"]["settings"]["cache"]["ttl"], "12h")
+        self.assertIn("Codex has no client setting", out)
+        self.assertIn("GitHub Copilot has no client setting", out)
+
+        code, out = self.install("--cache", "warm")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("promptCacheTtl", self.read_json(".claude", "settings.json"))
+        self.assertIn("Claude Code has no cache warming", out)
+        self.assertEqual(self.read_json(".config", "opencode", "opencode.json"), {**user_config, "warming": True})
+
+        code, out = self.install("--cache", "default")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.read_json(".config", "opencode", "opencode.json"), user_config)
+
+    def test_cache_leaves_old_opencode_and_jsonc_configs_alone(self):
+        self.fake_cli("opencode", "1.19.5")
+        code, out = self.install("--cache", "long")
+        self.assertEqual(code, 0, out)
+        self.assertIn("need opencode 2 or later", out)
+        self.assertFalse(os.path.exists(self.path(".config", "opencode", "opencode.json")))
+
+        self.fake_cli("opencode", "2.3.0")
+        jsonc = self.path(".config", "opencode", "opencode.jsonc")
+        with open(jsonc, "w") as handle:
+            handle.write('{\n  // mine\n  "model": "x"\n}\n')
+        code, out = self.install()
+        self.assertEqual(code, 0, out)
+        self.assertIn("by hand", out)
+        self.assertEqual(read_file(jsonc), '{\n  // mine\n  "model": "x"\n}\n')
 
     def test_fresh_install_configures_all_four_agents(self):
         code, out = self.install()
