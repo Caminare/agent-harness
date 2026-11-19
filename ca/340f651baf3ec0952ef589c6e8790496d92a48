@@ -1,0 +1,18 @@
+README.md
+  h_07bc29e988e787 79
+lib/install.py
+  h_07bc29e988e787 62,64,78,395,449,462-463,515-517,647-648,650
+tests/test_install.py
+  h_07bc29e988e787 42,177-189
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ca340f651baf3ec0952ef589c6e8790496d92a48",
+  "prompts": {},
+  "humans": {
+    "h_07bc29e988e787": {
+      "author": "Gabriel Vitor <c-gvitor@neogov.net>"
+    }
+  }
+}
