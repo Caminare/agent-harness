@@ -76,7 +76,7 @@ On Windows, a link is a symlink when your account may create one (Developer Mode
    ```powershell
    & "$HOME\.agents\install.ps1" --dry-run; & "$HOME\.agents\install.ps1"
    ```
-   On the first run it asks two questions and remembers the answers in `~/.agents/local/choices.json`: which [memory layer](#memory-layer) to use and which [prompt-cache mode](#prompt-cache). Pass `--memory none|ai-memory|optmem` and `--cache default|long|warm` to answer without prompts, or `--reconfigure` to be asked again.
+   On the first run it asks two questions and remembers the answers in `~/.agents/local/choices.json`: which [memory layer](#memory-layer) to use and which [prompt-cache mode](#prompt-cache). Pass `--memory none|ai-memory|optmem` and `--cache default|long|warm` to answer without prompts, or `--reconfigure` to be asked again. Pass `--only claude|codex|copilot|opencode` to configure a single agent. The installer honors `CLAUDE_CONFIG_DIR`, so a second Claude Code profile (for example `~/.claude-personal`) is configured instead of `~/.claude` when the variable is set.
 
    It links the instructions and skills for Claude Code, Codex, Copilot and opencode, writes their hook configuration (guard and format; for opencode a small plugin that calls the same hooks), merging into existing Claude and Codex settings without removing your entries, and installs the mattpocock skills in every agent it finds (`--no-plugins` skips that). opencode has no plugin marketplace, so it gets them as copies in `~/.config/opencode/skills` via `npx skills`; update them with `npx skills update --global`. Replaced files go to `~/.agents-backup/`.
 

@@ -39,7 +39,7 @@ class Install(unittest.TestCase):
         shutil.copytree(REPO, self.harness, ignore=shutil.ignore_patterns(".git", "__pycache__", "local"))
         self.env = {**os.environ, "HOME": self.home, "USERPROFILE": self.home,
                     "PATH": os.path.dirname(sys.executable) + os.pathsep + os.environ.get("PATH", "")}
-        for var in ("CODEX_HOME", "COPILOT_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME"):
+        for var in ("CLAUDE_CONFIG_DIR", "CODEX_HOME", "COPILOT_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME"):
             self.env.pop(var, None)
 
     def tearDown(self):
@@ -173,6 +173,19 @@ class Install(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn("by hand", out)
         self.assertEqual(read_file(jsonc), '{\n  // mine\n  "model": "x"\n}\n')
+
+    def test_claude_config_dir_redirects_claude_only(self):
+        profile = self.path(".claude-personal")
+        self.env["CLAUDE_CONFIG_DIR"] = profile
+        code, out = self.install("--only", "claude")
+        self.assertEqual(code, 0, out)
+        self.assertIn("@~/.agents/AGENTS.md", self.read(".claude-personal", "CLAUDE.md"))
+        self.assertEqual(set(self.read_json(".claude-personal", "settings.json")["hooks"]),
+                         {"PreToolUse", "PostToolUse"})
+        for skill in os.listdir(os.path.join(self.harness, "skills")):
+            self.assertTrue(os.path.isfile(os.path.join(profile, "skills", skill, "SKILL.md")), skill)
+        for untouched in (".claude", ".codex", ".copilot", ".config"):
+            self.assertFalse(os.path.exists(self.path(untouched)), untouched)
 
     def test_fresh_install_configures_all_four_agents(self):
         code, out = self.install()

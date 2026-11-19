@@ -59,8 +59,9 @@ OPTMEM_URL = f"https://raw.githubusercontent.com/VictorTaelin/OptMem/{OPTMEM_COM
 
 class Installer:
     def __init__(self, dry_run: bool, plugins: bool, memory: str = None, cache: str = None,
-                 reconfigure: bool = False):
+                 reconfigure: bool = False, only: str = None):
         self.dry = dry_run
+        self.only = only
         self.plugins = plugins
         try:
             saved = load_json(CHOICES_FILE)
@@ -74,6 +75,7 @@ class Installer:
         self.backup_dir = os.path.join(HOME, ".agents-backup", time.strftime("%Y%m%d-%H%M%S"))
         self.copied_files = []
         self.python = sys.executable
+        self.claude_home = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(HOME, ".claude")
         self.copilot_home = os.environ.get("COPILOT_HOME") or os.path.join(HOME, ".copilot")
         self.opencode_home = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config"),
                                           "opencode")
@@ -390,7 +392,7 @@ class Installer:
 
     def claude(self) -> None:
         self.say("Claude Code")
-        claude_dir = os.path.join(HOME, ".claude")
+        claude_dir = self.claude_home
         bridge = read(os.path.join(HARNESS, "adapters", "claude", "CLAUDE.md"))
         existing = os.path.join(claude_dir, "CLAUDE.md")
         if self.memory != "none":
@@ -444,7 +446,7 @@ class Installer:
     # ---------- mattpocock skills plugin ----------
     def install_plugins(self) -> None:
         self.say(f"{PLUGIN} plugin (MIT, github.com/mattpocock/skills)")
-        for folder in (os.path.join(HOME, ".claude", "skills"), os.path.join(HOME, ".agents", "skills"),
+        for folder in (os.path.join(self.claude_home, "skills"), os.path.join(HOME, ".agents", "skills"),
                        os.path.join(self.copilot_home, "skills")):
             for name in MATT_SKILL_NAMES:
                 path = os.path.join(folder, name)
@@ -457,6 +459,8 @@ class Installer:
                         ["plugin", "install", f"{PLUGIN}@mattpocock"]],
         }
         for cli, commands in steps.items():
+            if self.only not in (None, cli):
+                continue
             exe = shutil.which(cli)
             if not exe:
                 self.say(f"  skip: {cli} not found")
@@ -508,10 +512,9 @@ class Installer:
         self.say(f"Harness: {HARNESS}\nPython for hooks: {self.python}")
         self.resolve_choices()
         self.instructions()
-        self.codex()
-        self.claude()
-        self.copilot()
-        self.opencode()
+        for name in ("codex", "claude", "copilot", "opencode"):
+            if self.only in (None, name):
+                getattr(self, name)()
         if self.plugins:
             self.install_plugins()
         self.save_choices()
@@ -641,8 +644,10 @@ def main() -> None:
     parser.add_argument("--memory", choices=list(MEMORY_LAYERS), help="memory layer (remembered for later runs)")
     parser.add_argument("--cache", choices=list(CACHE_MODES), help="prompt-cache mode (remembered for later runs)")
     parser.add_argument("--reconfigure", action="store_true", help="ask again for the remembered choices")
+    parser.add_argument("--only", choices=["claude", "codex", "copilot", "opencode"],
+                        help="configure just this agent (default: all four)")
     args = parser.parse_args()
-    Installer(args.dry_run, not args.no_plugins, args.memory, args.cache, args.reconfigure).run()
+    Installer(args.dry_run, not args.no_plugins, args.memory, args.cache, args.reconfigure, args.only).run()
 
 
 if __name__ == "__main__":
