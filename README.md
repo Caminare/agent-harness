@@ -1,6 +1,6 @@
 # Agent harness
 
-One agent-agnostic setup for **Claude Code, Codex, GitHub Copilot and opencode**, on **Windows, macOS and Linux**.
+One agent-agnostic setup for **Claude Code, Codex, GitHub Copilot, opencode and Antigravity**, on **Windows, macOS and Linux**.
 Everything lives in `~/.agents`; each agent gets a thin link or a generated bridge to it.
 
 ```mermaid
@@ -12,18 +12,22 @@ flowchart LR
   A -->|"@import"| CL["~/.claude/CLAUDE.md"]
   A -->|link| CP["~/.copilot/copilot-instructions.md"]
   A -->|link| OC["~/.config/opencode/AGENTS.md"]
+  A -->|link| AG["~/.gemini/config/plugins/agents-harness/rules/AGENTS.md"]
   S -->|read natively| CODEX[Codex]
   S -->|read natively| COPILOT[Copilot]
   S -->|read natively| OPENCODE[opencode]
   S -->|per-skill links| CS["~/.claude/skills"]
+  S -->|per-skill links| AS["~/.gemini/config/plugins/agents-harness/skills"]
   K --> CH["~/.claude/settings.json"]
   K --> XH["~/.codex/hooks.json"]
   K --> PH["~/.copilot/hooks/agents-harness.json"]
   K --> OP["~/.config/opencode/plugins/agents-harness.js"]
+  K --> AH["~/.gemini/config/plugins/agents-harness/hooks.json"]
   P["repo AGENTS.md + .agents/"] --> CODEX
   P --> COPILOT
   P --> OPENCODE
   P --> CLAUDE[Claude Code]
+  P --> ANTIGRAVITY[Antigravity]
 ```
 
 ## What each agent reads
@@ -34,6 +38,7 @@ flowchart LR
 | Codex | `~/.codex/AGENTS.md`, linked | `~/.agents/skills`, natively | `~/.codex/hooks.json` | repo `AGENTS.md` |
 | GitHub Copilot | `~/.copilot/copilot-instructions.md`, linked | `~/.agents/skills`, natively | `~/.copilot/hooks/agents-harness.json` | repo `AGENTS.md` (also `CLAUDE.md` and `.github/copilot-instructions.md`, combined) |
 | opencode | `~/.config/opencode/AGENTS.md`, linked | `~/.agents/skills`, natively | `~/.config/opencode/plugins/agents-harness.js`, a plugin that runs the same hooks | repo `AGENTS.md` |
+| Antigravity | `~/.gemini/config/plugins/agents-harness/rules/AGENTS.md`, linked | `~/.gemini/config/plugins/agents-harness/skills/*`, real folders with linked files | `~/.gemini/config/plugins/agents-harness/hooks.json` | repo `AGENTS.md` (and `GEMINI.md` / `.agents/`) |
 
 Claude Code and Copilot have no user-level `AGENTS.md`, which is why those two bridges exist. You never edit them; edit `~/.agents/AGENTS.md`.
 
@@ -58,7 +63,7 @@ On Windows, a link is a symlink when your account may create one (Developer Mode
 
 ## Setup
 
-1. **Prerequisites.** Python 3.10 or later (the hooks run on it), git, and the agents you use: Claude Code v2.1.277 or later, Codex, GitHub Copilot CLI, opencode 1.18.29 or later. Node.js and pipx for the optional tools below. On Windows, Git for Windows is recommended (Claude Code runs hooks through Git Bash when present).
+1. **Prerequisites.** Python 3.10 or later (the hooks run on it), git, and the agents you use: Claude Code v2.1.277 or later, Codex, GitHub Copilot CLI, opencode 1.18.29 or later, Antigravity (`agy` CLI, Antigravity App or IDE). Node.js and pipx for the optional tools below. On Windows, Git for Windows is recommended (Claude Code runs hooks through Git Bash when present).
 
 2. **Clone the harness into `~/.agents`.**
    ```bash
@@ -76,11 +81,11 @@ On Windows, a link is a symlink when your account may create one (Developer Mode
    ```powershell
    & "$HOME\.agents\install.ps1" --dry-run; & "$HOME\.agents\install.ps1"
    ```
-   On the first run it asks two questions and remembers the answers in `~/.agents/local/choices.json`: which [memory layer](#memory-layer) to use and which [prompt-cache mode](#prompt-cache). Pass `--memory none|ai-memory|optmem` and `--cache default|long|warm` to answer without prompts, or `--reconfigure` to be asked again.
+   On the first run it asks two questions and remembers the answers in `~/.agents/local/choices.json`: which [memory layer](#memory-layer) to use and which [prompt-cache mode](#prompt-cache). Pass `--memory none|ai-memory|optmem` and `--cache default|long|warm` to answer without prompts, or `--reconfigure` to be asked again. Pass `--only claude|codex|copilot|opencode|antigravity` to configure a single agent. The installer honors `CLAUDE_CONFIG_DIR` (for a second Claude Code profile such as `~/.claude-personal`) and `ANTIGRAVITY_CONFIG_DIR` (default `~/.gemini/config`).
 
-   It links the instructions and skills for Claude Code, Codex, Copilot and opencode, writes their hook configuration (guard and format; for opencode a small plugin that calls the same hooks), merging into existing Claude and Codex settings without removing your entries, and installs the mattpocock skills in every agent it finds (`--no-plugins` skips that). opencode has no plugin marketplace, so it gets them as copies in `~/.config/opencode/skills` via `npx skills`; update them with `npx skills update --global`. Replaced files go to `~/.agents-backup/`.
+   It links the instructions and skills for Claude Code, Codex, Copilot, opencode and Antigravity (as a native plugin at `~/.gemini/config/plugins/agents-harness`), writes their hook configuration (guard and format; for opencode a small plugin that calls the same hooks), merging into existing Claude and Codex settings without removing your entries, and installs the mattpocock skills in every agent it finds (`--no-plugins` skips that). opencode has no plugin marketplace, so it gets them as copies in `~/.config/opencode/skills` via `npx skills`; update them with `npx skills update --global`. Antigravity gets them via a shallow clone passed to `agy plugin install`. Replaced files go to `~/.agents-backup/`.
 
-4. **Trust the hooks and restart.** Codex: `/hooks`, trust the two harness hooks. Restart Claude Code, Copilot and opencode; check `/hooks` in Claude Code.
+4. **Trust the hooks and restart.** Codex: `/hooks`, trust the two harness hooks. Restart Claude Code, Copilot, opencode and Antigravity; check `/hooks` in Claude Code and `agy plugin list` for Antigravity.
 
 5. **Remove what is replaced.** `claude plugin uninstall caveman@caveman`, plus its Codex skill folder if you added one. Delete mattpocock skills you once copied by hand (`npx skills add`); the installer warns about them.
 
@@ -124,7 +129,7 @@ Pick one, or none. The rules for the chosen layer are added to what every agent 
 | Stored in | ai-memory's own store | `~/.optmem/memory` (append-only; `MEMORY_DIR` moves it) | |
 | Choose it when | You want automatic capture and handoffs across agents and repos | You want something small you can read in five minutes | You do not want memory |
 
-How it reaches each agent: Claude Code imports `~/.agents/local/memory.md` next to `AGENTS.md`. Codex, Copilot and opencode load a generated `~/.agents/local/AGENTS.md` (your `AGENTS.md` plus the layer), so with a layer chosen, run the installer again after editing `AGENTS.md`.
+How it reaches each agent: Claude Code imports `~/.agents/local/memory.md` next to `AGENTS.md`. Codex, Copilot, opencode and Antigravity load a generated `~/.agents/local/AGENTS.md` (your `AGENTS.md` plus the layer), so with a layer chosen, run the installer again after editing `AGENTS.md`.
 
 OptMem has no license file, so the harness does not copy it. The installer downloads one pinned commit, checks its SHA-256, and runs `memo init`, which never touches existing memories; the rules block is the one `memo init` prints. To update OptMem later, run its own installer. Switching layers never deletes memories.
 
@@ -138,6 +143,7 @@ Agents re-send the whole conversation each turn, and the provider's prompt cache
 | opencode (2.x) | Each provider's default (5 minutes on Anthropic) | `settings.cache.ttl`: `1h` for Anthropic, `12h` for OpenAI | `"warming": true`: while you pause, it re-sends the context about every 4.5 minutes for up to 30 minutes |
 | Codex | Provider-managed | No client setting | No client setting |
 | GitHub Copilot | Provider-managed | No client setting | No client setting |
+| Antigravity | Provider-managed | No client setting | No client setting |
 
 Trade-offs: a 1-hour Anthropic cache write costs 2x the input price instead of 1.25x, and a 12-hour OpenAI write 2.5x, so `long` pays off when you often pause for more than 5 minutes and loses on short, continuous bursts. `warm` sends real requests that cost tokens and count against rate limits. Pick one; warming does nothing for a cache that already outlives the 30-minute window. The installer writes opencode settings only into `opencode.json`; with an `opencode.jsonc` it prints the lines to add. Undoing a mode removes only the values the installer set.
 
@@ -157,6 +163,7 @@ How to set it up in each agent:
 | Codex | `[agents]` in `~/.codex/config.toml`: `default_subagent_model = "<a smaller model>"`, `default_subagent_reasoning_effort = "low"` | A role under `[agents.<name>]` with its own `config_file` |
 | opencode | Override the built-ins: `"agents": {"general": {"model": "<provider/small-model>"}, "explore": {"model": "<provider/small-model>"}}` | `~/.config/opencode/agents/<name>.md` with `mode: subagent` and `model: <provider/small-model>` |
 | GitHub Copilot | No global setting | `~/.copilot/agents/<name>.agent.md` with `model: <model>` in the frontmatter |
+| Antigravity | Pass `Model: "flash"` or `"flash_lite"` when invoking a subagent | Defined per conversation with `define_subagent` or bundled in a plugin |
 
 Notes: on Claude Code, subagents get a 5-minute cache even on a subscription, which suits short tasks. A subagent starts with an empty context, so give it the file paths and the exact goal. With OptMem, subagents must not run `memo`; the OptMem rules tell the agent to say so when it spawns one.
 
@@ -183,7 +190,7 @@ flowchart LR
 
 1. Hooks are guardrails, not a sandbox. Use each agent's sandbox for real isolation.
 2. CI runs the rendered hook commands through sh, bash, PowerShell and cmd. The opencode plugin is loaded in Node and exercised against fake contexts for both opencode plugin APIs. What CI cannot run is each agent itself: Codex's Windows hook shell, Copilot's tool names and opencode's hook payloads are taken from their documentation and published types, so the first session in each agent is the real check.
-3. `context: fork` and `disable-model-invocation` are Claude Code fields. Codex, Copilot and opencode run forked skills inline (opencode does honor `disable-model-invocation`); Codex gets the manual-only policy for the strict review and `setup-repo` through `agents/openai.yaml`.
+3. `context: fork` and `disable-model-invocation` are Claude Code fields. Codex, Copilot, opencode and Antigravity run forked skills inline (opencode does honor `disable-model-invocation`); Codex gets the manual-only policy for the strict review and `setup-repo` through `agents/openai.yaml`.
 4. CI checks the memory layer with a stand-in for OptMem's script and the cache modes with a fake opencode; the real OptMem was checked by hand on Linux only.
 5. Copilot CLI contains an unreleased 1-hour cache flag that GitHub controls; there is no user setting yet.
 6. opencode also reads `~/.claude/skills`, so it sees the harness skills twice; both entries point at the same files and opencode keeps one.

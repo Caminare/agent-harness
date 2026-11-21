@@ -1,4 +1,4 @@
-"""Agent harness installer for Claude Code, Codex, GitHub Copilot and opencode, on Windows, macOS and Linux.
+"""Agent harness installer for Claude Code, Codex, GitHub Copilot, opencode and Antigravity, on Windows, macOS and Linux.
 
 Run through install.sh (macOS, Linux, WSL, Git Bash) or install.ps1 (Windows PowerShell).
 One source of truth in ~/.agents; each agent gets thin links or generated bridges.
@@ -13,6 +13,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 
 sys.dont_write_bytecode = True  # keep ~/.agents free of __pycache__
 import time
@@ -31,7 +32,13 @@ HOOKS = (("PreToolUse", "guard.py", 15), ("PostToolUse", "format.py", 90))
 CLAUDE_MATCHERS = {"PreToolUse": "Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit|Read|Grep",
                    "PostToolUse": "Edit|Write|MultiEdit"}
 CODEX_MATCHERS = {"PreToolUse": "^Bash$|^apply_patch$", "PostToolUse": "^apply_patch$"}
+ANTIGRAVITY_MATCHERS = {
+    "PreToolUse": "run_command|edit_file|write_file|read_file|view_file|"
+                  "write_to_file|replace_file_content|multi_replace_file_content|grep_search",
+    "PostToolUse": "edit_file|write_file|write_to_file|replace_file_content|multi_replace_file_content",
+}
 PLUGIN = "mattpocock-skills"
+MATT_SKILLS_REPO = "https://github.com/mattpocock/skills.git"
 MATT_SKILL_NAMES = ("tdd", "grill-me", "to-spec", "code-review")
 # opencode has no mattpocock plugin; the skills CLI copies the files. --copy keeps them out of
 # ~/.agents/skills (its default "canonical" folder), which Codex and Copilot also read.
@@ -59,8 +66,9 @@ OPTMEM_URL = f"https://raw.githubusercontent.com/VictorTaelin/OptMem/{OPTMEM_COM
 
 class Installer:
     def __init__(self, dry_run: bool, plugins: bool, memory: str = None, cache: str = None,
-                 reconfigure: bool = False):
+                 reconfigure: bool = False, only: str = None):
         self.dry = dry_run
+        self.only = only
         self.plugins = plugins
         try:
             saved = load_json(CHOICES_FILE)
@@ -74,9 +82,12 @@ class Installer:
         self.backup_dir = os.path.join(HOME, ".agents-backup", time.strftime("%Y%m%d-%H%M%S"))
         self.copied_files = []
         self.python = sys.executable
+        self.claude_home = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(HOME, ".claude")
         self.copilot_home = os.environ.get("COPILOT_HOME") or os.path.join(HOME, ".copilot")
         self.opencode_home = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config"),
                                           "opencode")
+        self.antigravity_home = (os.environ.get("ANTIGRAVITY_CONFIG_DIR")
+                                 or os.path.join(HOME, ".gemini", "config"))
 
     # ---------- output and filesystem primitives ----------
     def say(self, text: str) -> None:
@@ -371,6 +382,17 @@ class Installer:
                              "powershell": self.powershell_command(script), "timeoutSec": timeout}]
         return {"version": 1, "hooks": hooks}
 
+    def antigravity_hooks(self) -> dict:
+        hooks = {}
+        for event, script, timeout in HOOKS:
+            command = self.windows_command(script) if IS_WINDOWS else self.posix_command(script)
+            handler = {"type": "command", "command": command, "timeout": timeout}
+            entry = {"hooks": [handler]}
+            if event in ANTIGRAVITY_MATCHERS:
+                entry = {"matcher": ANTIGRAVITY_MATCHERS[event], **entry}
+            hooks[event] = [entry]
+        return {"agents-harness": hooks}
+
     # ---------- per-agent setup ----------
     def check_location(self) -> None:
         if not same_path(HARNESS, os.path.join(HOME, ".agents")):
@@ -390,7 +412,7 @@ class Installer:
 
     def claude(self) -> None:
         self.say("Claude Code")
-        claude_dir = os.path.join(HOME, ".claude")
+        claude_dir = self.claude_home
         bridge = read(os.path.join(HARNESS, "adapters", "claude", "CLAUDE.md"))
         existing = os.path.join(claude_dir, "CLAUDE.md")
         if self.memory != "none":
@@ -432,6 +454,64 @@ class Installer:
         self.write_text(os.path.join(self.opencode_home, "plugins", "agents-harness.js"), self.opencode_plugin())
         self.opencode_cache()
 
+    def antigravity(self) -> None:
+        self.say("Antigravity")
+        plugin_dir = os.path.join(self.antigravity_home, "plugins", "agents-harness")
+        manifest = json.dumps({"name": "agents-harness", "version": "1.0.0"}, indent=2) + "\n"
+        self.write_text(os.path.join(plugin_dir, "plugin.json"), manifest)
+        self.link_file(self.agents_md, os.path.join(plugin_dir, "rules", "AGENTS.md"))
+        skills_dir = os.path.join(plugin_dir, "skills")
+        harness_skills = os.path.join(HARNESS, "skills")
+        expected_skills = set()
+        for name in sorted(os.listdir(harness_skills)):
+            source = os.path.join(harness_skills, name)
+            if os.path.isdir(source):
+                expected_skills.add(name)
+                # Antigravity's plugin scanner skips symlinked/junctioned skill directories;
+                # use real directories with linked (or copied on Windows) files inside.
+                self.sync_skill_dir(source, os.path.join(skills_dir, name))
+        self.remove_stale_skill_dirs(skills_dir, expected_skills)
+        hooks_file = os.path.join(plugin_dir, "hooks.json")
+        self.write_text(hooks_file, json.dumps(self.antigravity_hooks(), indent=2) + "\n")
+        self.no_cache_setting("Antigravity")
+
+    def sync_skill_dir(self, source: str, dest: str) -> None:
+        if is_link(dest):
+            self.act(f"replace linked skill dir {dest}", remove_link, dest)
+        if not os.path.isdir(dest) or is_link(dest):
+            self.act(f"create {dest}", lambda: os.makedirs(dest, exist_ok=True))
+        expected_files = set()
+        for root, _, files in os.walk(source):
+            rel_dir = os.path.relpath(root, source)
+            for fname in sorted(files):
+                rel_file = fname if rel_dir == "." else os.path.join(rel_dir, fname)
+                expected_files.add(os.path.normcase(rel_file))
+                self.link_file(os.path.join(root, fname), os.path.join(dest, rel_file))
+        if os.path.isdir(dest) and not is_link(dest):
+            for root, dirs, files in os.walk(dest, topdown=False):
+                rel_dir = os.path.relpath(root, dest)
+                for fname in files:
+                    rel_file = fname if rel_dir == "." else os.path.join(rel_dir, fname)
+                    if os.path.normcase(rel_file) not in expected_files:
+                        path = os.path.join(root, fname)
+                        self.act(f"remove stale file {path}", os.unlink, path)
+                for dname in dirs:
+                    dpath = os.path.join(root, dname)
+                    if not os.listdir(dpath):
+                        self.act(f"remove empty dir {dpath}", os.rmdir, dpath)
+
+    def remove_stale_skill_dirs(self, skills_dir: str, expected: set) -> None:
+        if not os.path.isdir(skills_dir):
+            return
+        for name in sorted(os.listdir(skills_dir)):
+            if name in expected:
+                continue
+            path = os.path.join(skills_dir, name)
+            if is_link(path):
+                self.act(f"remove stale link {path}", remove_link, path)
+            elif os.path.isdir(path):
+                self.act(f"remove stale skill dir {path}", shutil.rmtree, path)
+
     def remove_stale_links(self, skills_dir: str) -> None:
         if not os.path.isdir(skills_dir):
             return
@@ -444,8 +524,8 @@ class Installer:
     # ---------- mattpocock skills plugin ----------
     def install_plugins(self) -> None:
         self.say(f"{PLUGIN} plugin (MIT, github.com/mattpocock/skills)")
-        for folder in (os.path.join(HOME, ".claude", "skills"), os.path.join(HOME, ".agents", "skills"),
-                       os.path.join(self.copilot_home, "skills")):
+        for folder in (os.path.join(self.claude_home, "skills"), os.path.join(HOME, ".agents", "skills"),
+                       os.path.join(self.copilot_home, "skills"), os.path.join(self.antigravity_home, "skills")):
             for name in MATT_SKILL_NAMES:
                 path = os.path.join(folder, name)
                 if os.path.isdir(path) and not is_link(path):
@@ -457,6 +537,8 @@ class Installer:
                         ["plugin", "install", f"{PLUGIN}@mattpocock"]],
         }
         for cli, commands in steps.items():
+            if self.only not in (None, cli):
+                continue
             exe = shutil.which(cli)
             if not exe:
                 self.say(f"  skip: {cli} not found")
@@ -472,8 +554,11 @@ class Installer:
                 ok = result.returncode == 0 or b"already" in (result.stdout + result.stderr).lower()
                 self.say(f"  {'ran' if ok else 'FAILED'}: {cli} {' '.join(args)}")
         self.install_opencode_skills()
+        self.install_antigravity_plugin()
 
     def install_opencode_skills(self) -> None:
+        if self.only not in (None, "opencode"):
+            return
         if not shutil.which("opencode"):
             self.say("  skip: opencode not found")
             return
@@ -496,6 +581,40 @@ class Installer:
             ok = False
         self.say(f"  {'ran' if ok else 'FAILED'}: {command}")
 
+    def install_antigravity_plugin(self) -> None:
+        if self.only not in (None, "antigravity"):
+            return
+        exe = shutil.which("agy")
+        if not exe:
+            self.say("  skip: agy not found")
+            return
+        if self.installed(exe):
+            self.say("  ok: agy plugin installed")
+            return
+        git = shutil.which("git")
+        if not git:
+            self.say(f"  skip: git not found; clone {MATT_SKILLS_REPO} and run: agy plugin install <dir>")
+            return
+        if self.dry:
+            self.say(f"  would clone {MATT_SKILLS_REPO} and run: agy plugin install <tmp>")
+            return
+        try:
+            with tempfile.TemporaryDirectory(prefix="agents-harness-mattpocock-",
+                                             ignore_cleanup_errors=True) as tmp:
+                clone = subprocess.run([git, "clone", "--depth", "1", MATT_SKILLS_REPO, tmp],
+                                       capture_output=True, stdin=subprocess.DEVNULL, timeout=300)
+                if clone.returncode != 0:
+                    self.say(f"  FAILED: git clone --depth 1 {MATT_SKILLS_REPO}")
+                    return
+                result = subprocess.run([exe, "plugin", "install", tmp],
+                                        capture_output=True, stdin=subprocess.DEVNULL, timeout=300)
+                ok = result.returncode == 0 or b"already" in (result.stdout + result.stderr).lower()
+                self.say(f"  {'ran' if ok else 'FAILED'}: agy plugin install ({MATT_SKILLS_REPO})")
+                if IS_WINDOWS:
+                    make_writable(tmp)
+        except (OSError, subprocess.SubprocessError):
+            self.say(f"  FAILED: agy plugin install ({MATT_SKILLS_REPO})")
+
     def installed(self, exe: str) -> bool:
         try:
             result = subprocess.run([exe, "plugin", "list"], capture_output=True, timeout=60)
@@ -508,24 +627,23 @@ class Installer:
         self.say(f"Harness: {HARNESS}\nPython for hooks: {self.python}")
         self.resolve_choices()
         self.instructions()
-        self.codex()
-        self.claude()
-        self.copilot()
-        self.opencode()
+        for name in ("codex", "claude", "copilot", "opencode", "antigravity"):
+            if self.only in (None, name):
+                getattr(self, name)()
         if self.plugins:
             self.install_plugins()
         self.save_choices()
         self.say("")
         if self.copied_files:
-            self.say("Note: this Windows account cannot create file symlinks, so these are copies of "
-                     f"{self.agents_md}; run the installer again after editing or pulling AGENTS.md:")
+            self.say("Note: this Windows account cannot create file symlinks, so these are managed copies; "
+                     "run the installer again after editing or pulling ~/.agents:")
             for path in self.copied_files:
                 self.say(f"  {path}")
             self.say("(Turn on Windows Developer Mode to get real links instead.)")
         if self.memory != "none":
-            self.say(f"Note: with a memory layer, Codex, Copilot and opencode load {self.agents_md}, "
+            self.say(f"Note: with a memory layer, Codex, Copilot, opencode and Antigravity load {self.agents_md}, "
                      "generated from AGENTS.md and the layer; run the installer again after editing AGENTS.md.")
-        self.say("Next: trust the hooks (Codex: /hooks), then restart Claude Code, Codex, Copilot and opencode.")
+        self.say("Next: trust the hooks (Codex: /hooks), then restart Claude Code, Codex, Copilot, opencode and Antigravity.")
         self.say("Optional, per repository: ask the agent to run the setup-repo skill there.")
 
 
@@ -634,15 +752,28 @@ def make_dir_link(target: str, path: str) -> None:
         _winapi.CreateJunction(target, path)
 
 
+def make_writable(root: str) -> None:
+    """Clear read-only bits inside a temp git clone so Windows can delete it cleanly."""
+    for folder, _, files in os.walk(root):
+        for name in files:
+            try:
+                os.chmod(os.path.join(folder, name), 0o700)
+            except OSError:
+                pass
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Install the agent harness for Claude Code, Codex, Copilot and opencode.")
+    parser = argparse.ArgumentParser(
+        description="Install the agent harness for Claude Code, Codex, Copilot, opencode and Antigravity.")
     parser.add_argument("--dry-run", action="store_true", help="show what would change without changing it")
     parser.add_argument("--no-plugins", action="store_true", help="skip the mattpocock skills plugin")
     parser.add_argument("--memory", choices=list(MEMORY_LAYERS), help="memory layer (remembered for later runs)")
     parser.add_argument("--cache", choices=list(CACHE_MODES), help="prompt-cache mode (remembered for later runs)")
     parser.add_argument("--reconfigure", action="store_true", help="ask again for the remembered choices")
+    parser.add_argument("--only", choices=["claude", "codex", "copilot", "opencode", "antigravity"],
+                        help="configure just this agent (default: all five)")
     args = parser.parse_args()
-    Installer(args.dry_run, not args.no_plugins, args.memory, args.cache, args.reconfigure).run()
+    Installer(args.dry_run, not args.no_plugins, args.memory, args.cache, args.reconfigure, args.only).run()
 
 
 if __name__ == "__main__":
