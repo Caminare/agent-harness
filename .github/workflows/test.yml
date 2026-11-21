@@ -45,7 +45,11 @@ jobs:
           ! grep -q "back up" second-run.txt
           test -f "$HOME/.claude/skills/setup-repo/SKILL.md"
           test -f "$HOME/.copilot/hooks/agents-harness.json"
+          test -f "$HOME/.gemini/config/plugins/agents-harness/plugin.json"
+          test -f "$HOME/.gemini/config/plugins/agents-harness/hooks.json"
+          test -f "$HOME/.gemini/config/plugins/agents-harness/skills/setup-repo/SKILL.md"
           cmp "$HOME/.agents/AGENTS.md" "$HOME/.config/opencode/AGENTS.md"
+          cmp "$HOME/.agents/AGENTS.md" "$HOME/.gemini/config/plugins/agents-harness/rules/AGENTS.md"
           node -e "import(require('url').pathToFileURL(process.argv[1])).then(m => { if (m.default.id !== 'agents-harness') process.exit(1) })" "$HOME/.config/opencode/plugins/agents-harness.js"
 
       - name: Installer smoke test (Windows, install.ps1)
@@ -63,8 +67,14 @@ jobs:
           if (-not (Test-Path "$HOME\.claude\skills\setup-repo\SKILL.md")) { exit 1 }
           if (-not (Test-Path "$HOME\.copilot\hooks\agents-harness.json")) { exit 1 }
           if (-not (Test-Path "$HOME\.config\opencode\AGENTS.md")) { exit 1 }
+          if (-not (Test-Path "$HOME\.gemini\config\plugins\agents-harness\plugin.json")) { exit 1 }
+          if (-not (Test-Path "$HOME\.gemini\config\plugins\agents-harness\hooks.json")) { exit 1 }
+          if (-not (Test-Path "$HOME\.gemini\config\plugins\agents-harness\rules\AGENTS.md")) { exit 1 }
+          if (-not (Test-Path "$HOME\.gemini\config\plugins\agents-harness\skills\setup-repo\SKILL.md")) { exit 1 }
           node -e "import(require('url').pathToFileURL(process.argv[1])).then(m => { if (m.default.id !== 'agents-harness') process.exit(1) })" "$HOME\.config\opencode\plugins\agents-harness.js"
           if ($LASTEXITCODE -ne 0) { Write-Error 'opencode plugin did not load'; exit 1 }
           '{"tool_name":"Bash","tool_input":{"command":"git push --force"}}' | python "$HOME\.agents\hooks\guard.py"
           if ($LASTEXITCODE -ne 2) { Write-Error 'guard did not block'; exit 1 }
+          $agyOut = '{"hookEventName":"PreToolUse","toolCall":{"id":"1","name":"run_command","args":{"CommandLine":"git push --force"}}}' | python "$HOME\.agents\hooks\guard.py"
+          if ($LASTEXITCODE -ne 0 -or ($agyOut | ConvertFrom-Json).decision -ne 'deny') { Write-Error 'antigravity guard did not deny'; exit 1 }
           exit 0

@@ -1,9 +1,10 @@
-"""Shared helpers for the harness hooks (Claude Code, Codex, GitHub Copilot; Windows and Unix).
+"""Shared helpers for the harness hooks (Claude Code, Codex, GitHub Copilot, Antigravity; Windows and Unix).
 
 Each agent sends a JSON event on stdin. The field names differ slightly:
 Claude Code and Codex use tool_name/tool_input; Copilot uses the same with
 PascalCase event names, or toolName/toolArgs (sometimes a JSON string) with
-camelCase ones. normalize_event() maps all of them to one shape.
+camelCase ones; Antigravity uses toolCall: {name, args}. normalize_event() maps
+all of them to one shape.
 """
 import json
 import os
@@ -15,13 +16,17 @@ import sys
 IS_WINDOWS = os.name == "nt"
 
 SHELL_TOOLS = {"bash", "powershell", "pwsh", "shell", "run_in_terminal", "runinterminal",
-               "exec_command", "terminal"}
+               "exec_command", "terminal", "run_command"}
 POWERSHELL_TOOLS = {"powershell", "pwsh"}
 EDIT_TOOLS = {"edit", "write", "multiedit", "create", "str_replace", "str_replace_editor",
-              "notebookedit", "write_file", "edit_file", "create_file", "replace_string_in_file"}
-READ_TOOLS = {"read", "view", "read_file", "grep", "search"}
+              "notebookedit", "write_file", "edit_file", "create_file", "replace_string_in_file",
+              "write_to_file", "replace_file_content", "multi_replace_file_content"}
+READ_TOOLS = {"read", "view", "read_file", "view_file", "grep", "grep_search", "search",
+              "find_by_name", "list_dir"}
 PATCH_TOOLS = {"apply_patch"}
-PATH_KEYS = ("file_path", "path", "filePath", "notebook_path", "filename")
+COMMAND_KEYS = ("command", "CommandLine", "commandLine")
+PATH_KEYS = ("file_path", "path", "filePath", "notebook_path", "filename",
+             "Path", "TargetFile", "AbsolutePath", "SearchPath", "DirectoryPath")
 PATCH_FILE_LINE = re.compile(r"^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$", re.M)
 
 
@@ -36,9 +41,16 @@ def read_event():
 
 
 def normalize_event(event: dict) -> dict:
-    """Return {kind, tool, input, cwd} for any agent's payload."""
-    tool = event.get("tool_name") or event.get("toolName") or ""
-    tool_input = event.get("tool_input", event.get("toolArgs"))
+    """Return {kind, tool, input, cwd, protocol} for any agent's payload."""
+    tool_call = event.get("toolCall")
+    if isinstance(tool_call, dict):
+        protocol = "antigravity"
+        tool = tool_call.get("name") or ""
+        tool_input = tool_call.get("args")
+    else:
+        protocol = "standard"
+        tool = event.get("tool_name") or event.get("toolName") or ""
+        tool_input = event.get("tool_input", event.get("toolArgs"))
     if isinstance(tool_input, str):
         try:
             tool_input = json.loads(tool_input)
@@ -57,7 +69,15 @@ def normalize_event(event: dict) -> dict:
         kind = "read"
     else:
         kind = "other"
-    return {"kind": kind, "tool": name, "input": tool_input, "cwd": event.get("cwd") or os.getcwd()}
+    return {"kind": kind, "tool": name, "input": tool_input,
+            "cwd": event.get("cwd") or os.getcwd(), "protocol": protocol}
+
+
+def input_command(tool_input: dict) -> str:
+    for key in COMMAND_KEYS:
+        if tool_input.get(key):
+            return str(tool_input[key])
+    return ""
 
 
 def input_paths(tool_input: dict) -> list:

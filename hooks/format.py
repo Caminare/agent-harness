@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""PostToolUse hook for Claude Code, Codex and GitHub Copilot: format edited files.
+"""PostToolUse hook for Claude Code, Codex, GitHub Copilot and Antigravity: format edited files.
 
 Formats the touched files. A repository owns formatting by providing
 `.agents/format.sh` or `.agents/format.ps1`, which receives the file paths.
 Without one, a built-in formatter runs only where the repository already opts
 in: dart format for Dart, prettier when a prettier config exists, csharpier
 when it is a configured dotnet tool. Missing formatters are silent; a
-formatter that fails (the file may not parse) exits 2 so the agent sees it.
+formatter that fails (the file may not parse) exits 2 so standard agents see it,
+while Antigravity always receives `{}` on stdout and exit 0.
 """
 import glob
 import json
@@ -68,17 +69,26 @@ def builtin_command(path: str, root: str):
     return None
 
 
+def finish(protocol: str, failures: list) -> None:
+    if failures:
+        sys.stderr.write("Formatter failed; the edited file may not parse:\n" + "\n".join(failures) + "\n")
+    if protocol == "antigravity":
+        sys.stdout.write("{}\n")
+        sys.exit(0)
+    sys.exit(2 if failures else 0)
+
+
 def main() -> None:
     event = read_event()
     if event is None:
         sys.exit(0)
     e = normalize_event(event)
-    cwd = e["cwd"]
+    cwd, protocol = e["cwd"], e["protocol"]
     files = [f if os.path.isabs(f) else os.path.join(cwd, f) for f in touched_files(e) if f]
     files = [os.path.normpath(f) for f in files if os.path.isfile(f)]
     root = repo_root(cwd)
     if not files or not root:
-        sys.exit(0)
+        finish(protocol, [])
 
     owned = repo_script(root, "format")
     commands = [owned + files] if owned else [c for c in (builtin_command(f, root) for f in files) if c]
@@ -88,10 +98,7 @@ def main() -> None:
         code, output = run(cmd, root, TIMEOUT_SECONDS)
         if code not in (0, None, 127):
             failures.append(f"$ {' '.join(cmd)}\n{output[-2000:]}")
-    if failures:
-        sys.stderr.write("Formatter failed; the edited file may not parse:\n" + "\n".join(failures) + "\n")
-        sys.exit(2)
-    sys.exit(0)
+    finish(protocol, failures)
 
 
 if __name__ == "__main__":

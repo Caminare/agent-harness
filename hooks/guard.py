@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""PreToolUse guard for Claude Code, Codex and GitHub Copilot, on Windows and Unix.
+"""PreToolUse guard for Claude Code, Codex, GitHub Copilot and Antigravity, on Windows and Unix.
 
 Blocks destructive git commands, recursive deletes of root, home or wildcard
 paths (rm, Remove-Item, rd /s), reading or writing secret files, and running
 code-review-graph through the shell. Commands are tokenized, so words inside
-branch names or commit messages do not trigger it. Exit 2 blocks the call and
-sends the reason on stderr; every agent treats that as a denial.
+branch names or commit messages do not trigger it. Claude Code, Codex and
+Copilot expect exit 2 with the reason on stderr; Antigravity expects JSON on
+stdout ({"decision": "allow"|"deny", "reason": ...}) and exit 0.
 """
+import json
 import os
 import re
 import shlex
@@ -15,8 +17,8 @@ import sys
 sys.dont_write_bytecode = True  # keep ~/.agents free of __pycache__
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _common import (IS_WINDOWS, POWERSHELL_TOOLS, input_paths, normalize_event,  # noqa: E402
-                     patch_paths, read_event)
+from _common import (IS_WINDOWS, POWERSHELL_TOOLS, input_command, input_paths,  # noqa: E402
+                     normalize_event, patch_paths, read_event)
 
 OPERATORS = {";", "&&", "||", "|", "&", "(", ")", "|&"}
 REDIRECTS = {">", ">>", "<", "&>", "2>", "1>", ">|"}
@@ -189,15 +191,25 @@ def check_shell(cmd: str, tool: str):
     if tool in POWERSHELL_TOOLS:
         return check_command(cmd, powershell=True)
     reason = check_command(cmd, powershell=False)
-    if not reason and IS_WINDOWS:  # Codex and Copilot run PowerShell on Windows under any name
+    if not reason and IS_WINDOWS:  # Codex, Copilot and Antigravity run PowerShell on Windows under any name
         reason = check_command(cmd, powershell=True)
     return reason
 
 
-def block(reason: str) -> None:
-    sys.stderr.write(f"Blocked by harness guard: {reason}. "
-                     "Ask the user to run it themselves or approve another approach.\n")
+def block(reason: str, protocol: str = "standard") -> None:
+    message = (f"Blocked by harness guard: {reason}. "
+               "Ask the user to run it themselves or approve another approach.")
+    if protocol == "antigravity":
+        sys.stdout.write(json.dumps({"decision": "deny", "reason": message}) + "\n")
+        sys.exit(0)
+    sys.stderr.write(message + "\n")
     sys.exit(2)
+
+
+def allow(protocol: str = "standard") -> None:
+    if protocol == "antigravity":
+        sys.stdout.write(json.dumps({"decision": "allow"}) + "\n")
+    sys.exit(0)
 
 
 def main() -> None:
@@ -205,21 +217,21 @@ def main() -> None:
     if event is None:
         sys.exit(0)
     e = normalize_event(event)
-    tool_input = e["input"]
+    tool_input, protocol = e["input"], e["protocol"]
 
     if e["kind"] == "shell":
-        reason = check_shell(str(tool_input.get("command", "") or ""), e["tool"])
+        reason = check_shell(input_command(tool_input), e["tool"])
         if reason:
-            block(reason)
+            block(reason, protocol)
     elif e["kind"] in ("edit", "read"):
         for path in input_paths(tool_input):
             if is_secret_path(path):
-                block(f"{re.split(r'[/]', path.replace(chr(92), '/'))[-1]} is a secrets file")
+                block(f"{re.split(r'[/]', path.replace(chr(92), '/'))[-1]} is a secrets file", protocol)
     elif e["kind"] == "patch":
-        for path in patch_paths(str(tool_input.get("command", "") or "")):
+        for path in patch_paths(input_command(tool_input)):
             if is_secret_path(path):
-                block(f"{re.split(r'[/]', path.replace(chr(92), '/'))[-1]} is a secrets file")
-    sys.exit(0)
+                block(f"{re.split(r'[/]', path.replace(chr(92), '/'))[-1]} is a secrets file", protocol)
+    allow(protocol)
 
 
 if __name__ == "__main__":

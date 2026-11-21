@@ -14,6 +14,10 @@ import urllib.request
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 IS_WINDOWS = os.name == "nt"
 BLOCKED_PAYLOAD = json.dumps({"tool_name": "Bash", "tool_input": {"command": "git push --force"}})
+ANTIGRAVITY_BLOCKED_PAYLOAD = json.dumps({
+    "hookEventName": "PreToolUse",
+    "toolCall": {"id": "toolu_1", "name": "run_command", "args": {"CommandLine": "git push --force"}},
+})
 
 
 def tree(root: str) -> dict:
@@ -39,7 +43,8 @@ class Install(unittest.TestCase):
         shutil.copytree(REPO, self.harness, ignore=shutil.ignore_patterns(".git", "__pycache__", "local"))
         self.env = {**os.environ, "HOME": self.home, "USERPROFILE": self.home,
                     "PATH": os.path.dirname(sys.executable) + os.pathsep + os.environ.get("PATH", "")}
-        for var in ("CLAUDE_CONFIG_DIR", "CODEX_HOME", "COPILOT_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME"):
+        for var in ("CLAUDE_CONFIG_DIR", "CODEX_HOME", "COPILOT_HOME", "ANTIGRAVITY_CONFIG_DIR",
+                    "XDG_CACHE_HOME", "XDG_CONFIG_HOME"):
             self.env.pop(var, None)
 
     def tearDown(self):
@@ -96,7 +101,8 @@ class Install(unittest.TestCase):
         self.assertTrue(layer.startswith("## Memory"), layer)
         self.assertIn("python \"" if IS_WINDOWS else "`~/.optmem/memo wake`", layer)
         for parts in ((".codex", "AGENTS.md"), (".copilot", "copilot-instructions.md"),
-                      (".config", "opencode", "AGENTS.md")):
+                      (".config", "opencode", "AGENTS.md"),
+                      (".gemini", "config", "plugins", "agents-harness", "rules", "AGENTS.md")):
             self.assertEqual(self.read(*parts), agents_md.rstrip("\n") + "\n\n" + layer, parts)
         self.assertIn("@~/.agents/local/memory.md", self.read(".claude", "CLAUDE.md"))
         self.assertEqual(self.read_json(".agents", "local", "choices.json")["memory"], "optmem")
@@ -109,6 +115,8 @@ class Install(unittest.TestCase):
         code, out = self.install("--memory", "none")
         self.assertEqual(code, 0, out)
         self.assertEqual(self.read(".codex", "AGENTS.md"), agents_md)
+        self.assertEqual(self.read(".gemini", "config", "plugins", "agents-harness", "rules", "AGENTS.md"),
+                         agents_md)
         self.assertNotIn("memory.md", self.read(".claude", "CLAUDE.md"))
         self.assertFalse(os.path.exists(self.path(".agents", "local", "memory.md")))
         self.assertTrue(os.path.isdir(self.path(".optmem", "memory")), "memories are never touched")
@@ -147,6 +155,7 @@ class Install(unittest.TestCase):
         self.assertEqual(config["providers"]["openai"]["settings"]["cache"]["ttl"], "12h")
         self.assertIn("Codex has no client setting", out)
         self.assertIn("GitHub Copilot has no client setting", out)
+        self.assertIn("Antigravity has no client setting", out)
 
         code, out = self.install("--cache", "warm")
         self.assertEqual(code, 0, out)
@@ -184,22 +193,48 @@ class Install(unittest.TestCase):
                          {"PreToolUse", "PostToolUse"})
         for skill in os.listdir(os.path.join(self.harness, "skills")):
             self.assertTrue(os.path.isfile(os.path.join(profile, "skills", skill, "SKILL.md")), skill)
-        for untouched in (".claude", ".codex", ".copilot", ".config"):
+        for untouched in (".claude", ".codex", ".copilot", ".config", ".gemini"):
             self.assertFalse(os.path.exists(self.path(untouched)), untouched)
 
-    def test_fresh_install_configures_all_four_agents(self):
-        code, out = self.install()
+    def test_antigravity_config_dir_and_only_flag(self):
+        custom = self.path(".gemini-custom")
+        self.env["ANTIGRAVITY_CONFIG_DIR"] = custom
+        code, out = self.install("--only", "antigravity", "--memory", "none")
+        self.assertEqual(code, 0, out)
+        plugin = os.path.join(custom, "plugins", "agents-harness")
+        self.assertEqual(json.loads(read_file(os.path.join(plugin, "plugin.json"))),
+                         {"name": "agents-harness", "version": "1.0.0"})
+        self.assertEqual(read_file(os.path.join(plugin, "rules", "AGENTS.md")), self.read(".agents", "AGENTS.md"))
+        hooks = json.loads(read_file(os.path.join(plugin, "hooks.json")))
+        self.assertEqual(set(hooks["agents-harness"]), {"PreToolUse", "PostToolUse"})
+        for skill in os.listdir(os.path.join(self.harness, "skills")):
+            skill_dir = os.path.join(plugin, "skills", skill)
+            self.assertTrue(os.path.isdir(skill_dir) and not os.path.islink(skill_dir), skill)
+            self.assertTrue(os.path.isfile(os.path.join(skill_dir, "SKILL.md")), skill)
+        for untouched in (".claude", ".codex", ".copilot", ".config", ".gemini"):
+            self.assertFalse(os.path.exists(self.path(untouched)), untouched)
+
+    def test_fresh_install_configures_all_five_agents(self):
+        code, out = self.install("--memory", "none")
         self.assertEqual(code, 0, out)
         agents_md = self.read(".agents", "AGENTS.md")
         self.assertEqual(self.read(".codex", "AGENTS.md"), agents_md)
         self.assertEqual(self.read(".copilot", "copilot-instructions.md"), agents_md)
         self.assertEqual(self.read(".config", "opencode", "AGENTS.md"), agents_md)
+        self.assertEqual(self.read(".gemini", "config", "plugins", "agents-harness", "rules", "AGENTS.md"),
+                         agents_md)
+        self.assertEqual(self.read_json(".gemini", "config", "plugins", "agents-harness", "plugin.json"),
+                         {"name": "agents-harness", "version": "1.0.0"})
         self.assertIn("@~/.agents/AGENTS.md", self.read(".claude", "CLAUDE.md"))
         for skill in os.listdir(os.path.join(self.harness, "skills")):
-            linked = self.path(".claude", "skills", skill, "SKILL.md")
-            self.assertTrue(os.path.isfile(linked), skill)
-            self.assertEqual(os.path.normcase(os.path.realpath(linked)),
-                             os.path.normcase(os.path.realpath(os.path.join(self.harness, "skills", skill, "SKILL.md"))))
+            src_skill = os.path.join(self.harness, "skills", skill, "SKILL.md")
+            claude_skill = self.path(".claude", "skills", skill, "SKILL.md")
+            self.assertTrue(os.path.isfile(claude_skill), claude_skill)
+            self.assertEqual(os.path.normcase(os.path.realpath(claude_skill)),
+                             os.path.normcase(os.path.realpath(src_skill)))
+            agy_skill_dir = self.path(".gemini", "config", "plugins", "agents-harness", "skills", skill)
+            self.assertTrue(os.path.isdir(agy_skill_dir) and not os.path.islink(agy_skill_dir), agy_skill_dir)
+            self.assertEqual(read_file(os.path.join(agy_skill_dir, "SKILL.md")), read_file(src_skill))
         claude = self.read_json(".claude", "settings.json")
         self.assertEqual(set(claude["hooks"]), {"PreToolUse", "PostToolUse"})
         self.assertIn("Bash(git push *)", claude["permissions"]["ask"])
@@ -208,6 +243,8 @@ class Install(unittest.TestCase):
         copilot = self.read_json(".copilot", "hooks", "agents-harness.json")
         self.assertEqual(copilot["version"], 1)
         self.assertEqual(set(copilot["hooks"]), {"PreToolUse", "PostToolUse"})
+        agy_hooks = self.read_json(".gemini", "config", "plugins", "agents-harness", "hooks.json")
+        self.assertEqual(set(agy_hooks["agents-harness"]), {"PreToolUse", "PostToolUse"})
         plugin = self.read(".config", "opencode", "plugins", "agents-harness.js")
         self.assertIn(json.dumps(sys.executable), plugin)
         self.assertNotIn("__PYTHON__", plugin)
@@ -216,7 +253,9 @@ class Install(unittest.TestCase):
     def test_rerun_changes_nothing(self):
         self.install()
         files = ((".claude", "settings.json"), (".codex", "hooks.json"),
-                 (".config", "opencode", "plugins", "agents-harness.js"))
+                 (".config", "opencode", "plugins", "agents-harness.js"),
+                 (".gemini", "config", "plugins", "agents-harness", "plugin.json"),
+                 (".gemini", "config", "plugins", "agents-harness", "hooks.json"))
         before = [self.read(*f) for f in files]
         code, out = self.install()
         self.assertEqual(code, 0, out)
@@ -283,10 +322,14 @@ class Install(unittest.TestCase):
         os.makedirs(gone)
         self.install()
         self.assertTrue(os.path.isdir(self.path(".claude", "skills", "dropped-skill")))
+        self.assertTrue(os.path.isdir(
+            self.path(".gemini", "config", "plugins", "agents-harness", "skills", "dropped-skill")))
         shutil.rmtree(gone)
         code, out = self.install()
         self.assertEqual(code, 0, out)
         self.assertFalse(os.path.lexists(self.path(".claude", "skills", "dropped-skill")), out)
+        self.assertFalse(os.path.lexists(
+            self.path(".gemini", "config", "plugins", "agents-harness", "skills", "dropped-skill")), out)
 
     def test_dry_run_changes_nothing(self):
         before = tree(self.home)
@@ -302,10 +345,17 @@ class Install(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertIn("must live at", out)
 
-    def run_shell(self, shell: list, command: str) -> int:
-        result = subprocess.run(shell + [command], input=BLOCKED_PAYLOAD.encode(), capture_output=True,
-                                env=self.env, timeout=60)
-        return result.returncode
+    def run_shell(self, shell: list, command: str, payload: str = BLOCKED_PAYLOAD):
+        if shell == ["cmd", "/c"]:
+            # Passing a list to cmd /c makes Python escape inner quotes as \", which cmd.exe rejects.
+            result = subprocess.run(command, shell=True, input=payload.encode(), capture_output=True,
+                                    env=self.env, timeout=60)
+        else:
+            result = subprocess.run(shell + [command], input=payload.encode(), capture_output=True,
+                                    env=self.env, timeout=60)
+        return (result.returncode,
+                result.stdout.decode("utf-8", "replace"),
+                result.stderr.decode("utf-8", "replace"))
 
     def test_rendered_hook_commands_run_in_each_agents_shell(self):
         """Run the exact guard command each agent will run, through that agent's shell."""
@@ -314,6 +364,9 @@ class Install(unittest.TestCase):
                       for h in e["hooks"] if "guard.py" in h["command"])
         codex = self.read_json(".codex", "hooks.json")["hooks"]["PreToolUse"][0]["hooks"][0]
         copilot = self.read_json(".copilot", "hooks", "agents-harness.json")["hooks"]["PreToolUse"][0]
+        antigravity = self.read_json(
+            ".gemini", "config", "plugins", "agents-harness", "hooks.json"
+        )["agents-harness"]["PreToolUse"][0]["hooks"][0]
         powershell = shutil.which("pwsh") or shutil.which("powershell")
         checks = []
         if IS_WINDOWS:
@@ -321,15 +374,55 @@ class Install(unittest.TestCase):
             checks.append(("claude/powershell", [powershell, "-NoProfile", "-Command"], claude["command"]))
             checks.append(("codex/cmd", ["cmd", "/c"], codex["commandWindows"]))
             checks.append(("copilot/powershell", [powershell, "-NoProfile", "-Command"], copilot["powershell"]))
+            agy_shell = ["cmd", "/c"]
         else:
             checks.append(("claude/sh", ["sh", "-c"], claude["command"]))
             checks.append(("codex/sh", ["sh", "-c"], codex["command"]))
             checks.append(("copilot/bash", ["bash", "-c"], copilot["bash"]))
             if powershell:
                 checks.append(("copilot/pwsh", [powershell, "-NoProfile", "-Command"], copilot["powershell"]))
+            agy_shell = ["sh", "-c"]
         for label, shell, command in checks:
             with self.subTest(label):
-                self.assertEqual(self.run_shell(shell, command), 2, f"{label}: {command}")
+                code, _, err = self.run_shell(shell, command)
+                self.assertEqual(code, 2, f"{label}: {command} -> {err}")
+                self.assertIn("Blocked by harness guard", err, f"{label}: {command}")
+        with self.subTest("antigravity"):
+            code, out, err = self.run_shell(agy_shell, antigravity["command"], ANTIGRAVITY_BLOCKED_PAYLOAD)
+            self.assertEqual(code, 0, f"antigravity: {antigravity['command']} -> {out} {err}")
+            self.assertEqual(json.loads(out)["decision"], "deny")
+
+    def test_antigravity_plugin_step_with_fake_clis(self):
+        bin_dir = os.path.join(self.tmp.name, "fake-agy-bin")
+        os.makedirs(bin_dir)
+        log = os.path.join(self.tmp.name, "agy-calls")
+        state = os.path.join(self.tmp.name, "agy-installed")
+        if IS_WINDOWS:
+            with open(os.path.join(bin_dir, "git.cmd"), "w", encoding="utf-8") as handle:
+                handle.write(f'@echo off\r\necho git %* >> "{log}"\r\nexit /b 0\r\n')
+            with open(os.path.join(bin_dir, "agy.cmd"), "w", encoding="utf-8") as handle:
+                handle.write(f'@echo off\r\necho agy %* >> "{log}"\r\n'
+                             f'if "%2"=="list" (\r\n  if exist "{state}" echo mattpocock-skills\r\n  exit /b 0\r\n)\r\n'
+                             f'if "%2"=="install" echo ok > "{state}"\r\nexit /b 0\r\n')
+        else:
+            with open(os.path.join(bin_dir, "git"), "w", encoding="utf-8") as handle:
+                handle.write(f'#!/bin/sh\necho "git $*" >> "{log}"\nexit 0\n')
+            os.chmod(os.path.join(bin_dir, "git"), 0o755)
+            with open(os.path.join(bin_dir, "agy"), "w", encoding="utf-8") as handle:
+                handle.write(f'#!/bin/sh\necho "agy $*" >> "{log}"\n'
+                             f'[ "$2" = list ] && [ -f "{state}" ] && echo mattpocock-skills\n'
+                             f'[ "$2" = install ] && touch "{state}"\nexit 0\n')
+            os.chmod(os.path.join(bin_dir, "agy"), 0o755)
+        self.env["PATH"] = bin_dir + os.pathsep + self.env["PATH"]
+        script = os.path.join(self.harness, "lib", "install.py")
+        for _ in range(2):
+            result = subprocess.run([sys.executable, script, "--only", "antigravity"], env=self.env,
+                                    capture_output=True, timeout=120)
+            self.assertEqual(result.returncode, 0, (result.stdout + result.stderr).decode("utf-8", "replace"))
+        calls = read_file(log)
+        self.assertEqual(calls.count("git clone --depth 1 https://github.com/mattpocock/skills.git"), 1, calls)
+        self.assertEqual(calls.count("agy plugin install "), 1, calls)
+        self.assertNotIn("opencode", calls)
 
     @unittest.skipIf(IS_WINDOWS, "fake CLIs are shell scripts")
     def test_plugin_step_with_fake_clis(self):

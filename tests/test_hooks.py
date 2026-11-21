@@ -1,4 +1,4 @@
-"""Hook tests with Claude Code, Codex and GitHub Copilot payloads. Runs on Windows and Unix.
+"""Hook tests with Claude Code, Codex, GitHub Copilot and Antigravity payloads. Runs on Windows and Unix.
 
     python -m unittest discover -s tests -v
 """
@@ -115,6 +115,39 @@ class Guard(unittest.TestCase):
         self.assertAllowed({"toolName": "bash", "toolArgs": json.dumps({"command": "git status"})})
         self.assertAllowed({"tool_name": "edit", "tool_input": {"path": "/repo/src/a.ts"}})
 
+    def test_antigravity_payload_shapes(self):
+        def agy(name, args):
+            return {"hookEventName": "PreToolUse", "toolCall": {"id": "toolu_1", "name": name, "args": args}}
+
+        for payload in [
+            agy("run_command", {"CommandLine": "git push --force origin main"}),
+            agy("run_command", {"CommandLine": "rm -rf /"}),
+            agy("edit_file", {"Path": "/repo/.env"}),
+            agy("write_file", {"Path": "/repo/certs/server.pem"}),
+            agy("read_file", {"Path": "/repo/.env.production"}),
+            agy("view_file", {"AbsolutePath": "/repo/.env.local"}),
+            agy("write_to_file", {"TargetFile": "/repo/.env"}),
+            agy("replace_file_content", {"TargetFile": "/repo/id_ed25519"}),
+            agy("grep_search", {"SearchPath": "/repo/.env"}),
+        ]:
+            with self.subTest(blocked=payload):
+                code, out, _ = call("guard.py", payload)
+                self.assertEqual(code, 0, out)
+                decision = json.loads(out)
+                self.assertEqual(decision["decision"], "deny")
+                self.assertIn("Blocked by harness guard", decision["reason"])
+
+        for payload in [
+            agy("run_command", {"CommandLine": "git status"}),
+            agy("edit_file", {"Path": "/repo/src/a.ts"}),
+            agy("read_file", {"Path": "/repo/.env.example"}),
+            agy("view_file", {"AbsolutePath": "/repo/README.md"}),
+        ]:
+            with self.subTest(allowed=payload):
+                code, out, _ = call("guard.py", payload)
+                self.assertEqual(code, 0, out)
+                self.assertEqual(json.loads(out), {"decision": "allow"})
+
     def test_tolerates_odd_payloads(self):
         for payload in ["not json", "[1,2]", json.dumps({"tool_name": "Bash", "tool_input": 5}),
                         json.dumps({"toolName": "bash", "toolArgs": "rm -rf /"})]:
@@ -162,6 +195,35 @@ class Format(unittest.TestCase):
 
     def test_no_formatter_is_silent(self):
         self.assertEqual(call("format.py", self.payload("Edit"), self.env)[0], 0)
+
+    def test_antigravity_post_tool_use_formats_and_outputs_json(self):
+        self.formatter('for f in "$@"; do echo formatted >> "$f"; done\n',
+                       'foreach ($f in $args) { Add-Content -Path $f -Value formatted }\n')
+        for name, args in [("edit_file", {"Path": self.file}),
+                           ("write_file", {"Path": self.file}),
+                           ("replace_file_content", {"TargetFile": self.file})]:
+            payload = {"cwd": self.repo, "hookEventName": "PostToolUse",
+                       "toolCall": {"id": "toolu_1", "name": name, "args": args}}
+            code, out, _ = call("format.py", payload, self.env)
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(out), {})
+        with open(self.file, encoding="utf-8") as handle:
+            self.assertGreaterEqual(handle.read().count("formatted"), 3)
+
+    def test_antigravity_post_tool_use_outputs_json_when_unformatted_or_failing(self):
+        no_repo = {"cwd": self.tmp.name, "hookEventName": "PostToolUse",
+                   "toolCall": {"id": "toolu_1", "name": "edit_file", "args": {"Path": self.file}}}
+        code, out, _ = call("format.py", no_repo, self.env)
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out), {})
+
+        self.formatter('echo "parse error" >&2; exit 1\n', 'Write-Error "parse error"; exit 1\n')
+        failing = {"cwd": self.repo, "hookEventName": "PostToolUse",
+                   "toolCall": {"id": "toolu_1", "name": "edit_file", "args": {"Path": self.file}}}
+        code, out, err = call("format.py", failing, self.env)
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out), {})
+        self.assertIn("parse error", err)
 
 
 if __name__ == "__main__":
